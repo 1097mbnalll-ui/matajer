@@ -245,6 +245,7 @@ async function ownerApi(request, env, path, url) {
     if (!/^trig_[A-Za-z0-9]{10,60}$/.test(id)) return json(400, { ok: false, code: "bad_routine_id" });
     if (/^https?:/i.test(token)) return json(400, { ok: false, code: "token_is_url" });
     if (!token) return json(400, { ok: false, code: "token_empty" });
+    if (/\.\.\.|…/.test(token)) return json(400, { ok: false, code: "token_masked" }); // المعاينة المختصرة من صفحة Claude
     if (!token.startsWith("sk-ant-")) return json(400, { ok: false, code: "token_prefix", start: token.slice(0, 3) });
     if (token.length < 40) return json(400, { ok: false, code: "token_short", len: token.length });
     await setSetting(env, "routine:" + body.emp, { id, token });

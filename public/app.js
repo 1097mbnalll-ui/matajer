@@ -209,7 +209,7 @@ document.addEventListener("click", async (e) => {
       toast("انحفظت"); closeSheet(); load();
     } else if (d.link) {
       const r = await api("/api/routine", { emp: d.link, id: $("#rtId").value.trim(), token: $("#rtTok").value.trim() });
-      toast(r.ok ? "انربط ✅" : ({ token_is_url: "هذا رابط، مو الرمز. الرمز يبدأ بـ sk-ant-", token_empty: "خانة الرمز فاضية", token_prefix: `الرمز لازم يبدأ بـ sk-ant- (اللي لصقته يبدأ بـ «${r.start}»)`, token_short: `الرمز ناقص (${r.len} حرف بس). انسخه كامل`, bad_routine_id: "رقم المهمة غلط" })[r.code] || "ما انحفظ، جرّب مرة ثانية"); if (r.ok) { await load(); openEmp(d.link); }
+      toast(r.ok ? "انربط ✅" : ({ token_is_url: "هذا رابط، مو الرمز. الرمز يبدأ بـ sk-ant-", token_empty: "خانة الرمز فاضية", token_masked: "هذا رمز مختصر فيه (...). سوّ رمز جديد (Regenerate) وانسخه كامل على طول", token_prefix: `الرمز لازم يبدأ بـ sk-ant- (اللي لصقته يبدأ بـ «${r.start}»)`, token_short: `الرمز ناقص (${r.len} حرف بس). انسخه كامل`, bad_routine_id: "رقم المهمة غلط" })[r.code] || "ما انحفظ، جرّب مرة ثانية"); if (r.ok) { await load(); openEmp(d.link); }
     } else if (d.unlink) {
       await api("/api/routine", { emp: d.unlink, clear: true }); toast("انفصل"); await load(); openEmp(d.unlink);
     } else if (el.id === "saveCfg") {

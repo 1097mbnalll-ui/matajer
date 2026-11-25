@@ -385,4 +385,5 @@ test("ربط الجلسة: رقم المهمة يتعبى لحاله، والر�
   assert.equal(env.fired.at(-1).headers.Authorization, "Bearer " + tok);
   assert.equal((await call(env, "/api/routine", { cookie: c, body: { emp: "monitor", token: "https://x" } })).body.code, "token_is_url");
   assert.equal((await call(env, "/api/routine", { cookie: c, body: { emp: "monitor", token: "sk-ant-abc" } })).body.code, "token_short");
+  assert.equal((await call(env, "/api/routine", { cookie: c, body: { emp: "monitor", token: "sk-ant-oat01-jMtMHZOt...WwAA" } })).body.code, "token_masked");
 });
