@@ -7,6 +7,7 @@ import { TEAM, AREAS, LEVELS, teamKeys, areaOf } from "./team.js";
 import { ensureSchema, now, log, getSetting, setSetting, permsOf, bump, teamState, hydrate, CFG_KEYS } from "./db.js";
 import { tg, wake, ownerChat, tgHookSecret, routineOf } from "./notify.js";
 import ASSETS from "./assets.js";
+import { runNoon, noonCall, noonReadAllowed, parseNoonKey, noonKey } from "./noon.js";
 import { runMonitor, analysisPrompt, DEFAULT_RULES, storeCall } from "./monitor.js";
 
 const SESSION_DAYS = 30, MAX_FAILS = 5, LOCK_MIN = 15;
@@ -43,6 +44,7 @@ export default {
       env = await hydrate(env);
       const m = new Date(event.scheduledTime || Date.now()).getUTCMinutes();
       await runMonitor(env, { hourly: m < 5 });
+      if (m % 15 < 5) await runNoon(env); // نون كل ١٥ دقيقة
       // تقرير الصباح: الساعة ٧ بتوقيت الرياض، مرة وحدة باليوم
       const riyadh = new Date((event.scheduledTime || Date.now()) + 3 * 3600e3);
       if (riyadh.getUTCHours() === 7 && (await bump(env, "morning_report", 1))) await wake(env, "morning", "حان وقت تقرير الصباح. اقرأ بيانات أمس واليوم من المتجر وأرسل التقرير.");
@@ -143,7 +145,7 @@ async function ownerApi(request, env, path, url) {
     const meetings = (await env.DB.prepare("SELECT * FROM meetings ORDER BY id DESC LIMIT 10").all()).results || [];
     const team = await teamState(env);
     for (const t of team) { const r = await routineOf(env, t.key); t.linked = !!(r.id && r.token); }
-    return json(200, { ok: true, team, telegram: { bot: !!env.TELEGRAM_BOT_TOKEN, linked: !!(await ownerChat(env)) }, reader: !!env.STORE_READER_PIN, areas: AREAS, levels: LEVELS, pending, alerts, meetings,
+    return json(200, { ok: true, team, telegram: { bot: !!env.TELEGRAM_BOT_TOKEN, linked: !!(await ownerChat(env)) }, reader: !!env.STORE_READER_PIN, noon: { key: !!(await noonKey(env)), skus: ((await getSetting(env, "noon_skus")) || []).length }, areas: AREAS, levels: LEVELS, pending, alerts, meetings,
       rules: { ...DEFAULT_RULES, ...(await getSetting(env, "rules", {})) }, caps: { fire: await getSetting(env, "fire_cap", 60), meetings: await getSetting(env, "meeting_cap", 5) } });
   }
   if (path === "/api/log") {
@@ -192,6 +194,25 @@ async function ownerApi(request, env, path, url) {
     await env.DB.prepare("DELETE FROM settings WHERE k = 'store_session'").run();
     await log(env, "manager", "config_changed", { keys: CFG_KEYS.filter((k) => body[k]), by: "المالك" });
     return json(200, { ok: true });
+  }
+  if (path === "/api/noon-key") { // ملف مفتاح نون (.json): ينحفظ مخفي ويتجرب فوراً
+    const p = parseNoonKey(clip(body.text, 20000));
+    if (p.error) return json(400, { ok: false, code: p.error });
+    await setSetting(env, "cfg:NOON_KEY", p.key);
+    await env.DB.prepare("DELETE FROM settings WHERE k = 'noon_session'").run();
+    await log(env, "noon", "key_saved", { by: "المالك" });
+    const t = await noonCall(env, "GET", "/impex/v1/export/category/list");
+    return json(200, { ok: true, test: { ok: t.ok, status: t.status, code: t.code || null, exports: (t.data?.export_categories || []).map((c) => c.export_category_code) } });
+  }
+  if (path === "/api/noon-test") {
+    const t = await noonCall(env, "GET", "/impex/v1/export/category/list");
+    return json(200, { ok: t.ok, status: t.status, code: t.code || null, exports: (t.data?.export_categories || []).map((c) => c.export_category_code) });
+  }
+  if (path === "/api/noon-skus") {
+    const skus = [...new Set(String(body.skus || "").split(/[\s,،]+/).map((x) => x.trim()).filter((x) => /^[\w.\-/]{1,120}$/.test(x)))].slice(0, 150);
+    await setSetting(env, "noon_skus", skus);
+    await log(env, "noon", "skus_set", { n: skus.length, by: "المالك" });
+    return json(200, { ok: true, n: skus.length });
   }
   if (path === "/api/routine") { // ربط جلسة موظف: الرمز ينحفظ وما يرجع للمتصفح أبداً
     if (!teamKeys.has(body.emp)) return json(400, { ok: false, code: "bad_emp" });
@@ -379,6 +400,22 @@ async function agentApi(request, env, path, url) {
     await log(env, emp, "read_store", { path: body.path, ok: r.ok });
     return json(r.ok ? 200 : 502, { ok: r.ok, status: r.status, data: r.body });
   }
+  // قراءة نون عن طريق المكتب (قراءة بس؛ أي تعديل سعر أو مخزون = طلب موافقة)
+  if (path === "/agent/noon") {
+    if (!["noon", "manager", "morning", "pricing"].includes(emp)) return json(403, { ok: false, code: "not_allowed" });
+    const method = body.method === "POST" ? "POST" : "GET", p = String(body.path || "");
+    if (!noonReadAllowed(method, p)) return json(400, { ok: false, code: "read_only_paths" });
+    const r = await noonCall(env, method, p, method === "POST" ? body.body || {} : undefined);
+    await log(env, emp, "read_noon", { path: p.slice(0, 80), ok: r.ok });
+    return json(r.ok ? 200 : 502, { ok: r.ok, status: r.status, code: r.code || null, data: r.data });
+  }
+  if (path === "/agent/noon-skus") { // مسؤول نون يحدد المنتجات اللي تنراقب (إعداد مكتب = بسيط)
+    if (emp !== "noon") return json(403, { ok: false, code: "noon_only" });
+    const skus = [...new Set((Array.isArray(body.skus) ? body.skus : []).map(String).filter((x) => /^[\w.\-/]{1,120}$/.test(x)))].slice(0, 150);
+    await setSetting(env, "noon_skus", skus);
+    await log(env, emp, "skus_set", { n: skus.length });
+    return json(200, { ok: true, n: skus.length });
+  }
   if (path === "/agent/report") { // تقرير الصباح يوصل للمالك مباشرة
     if (emp !== "morning") return json(403, { ok: false, code: "morning_only" });
     const text = clip(body.text, 3800).trim();
@@ -409,6 +446,7 @@ async function telegram(request, env) {
     let m;
     if ((m = d.match(/^a:(\d+):([yn])$/))) { const [, res] = await decide(env, Number(m[1]), m[2] === "y", "تيليقرام"); await answer(q.id, res.ok ? (m[2] === "y" ? "تمت الموافقة" : "انرفض") : "انحسم من قبل"); }
     else if ((m = d.match(/^z:(\d+)$/))) { const a = await env.DB.prepare("SELECT * FROM alerts WHERE id = ?").bind(Number(m[1])).first(); const w = a ? await wake(env, "monitor", analysisPrompt(a)) : { ok: false }; await answer(q.id, w.ok ? "المراقب يحللها الحين" : "ما قدرت أصحّي المراقب"); }
+    else if ((m = d.match(/^n:(\d+)$/))) { const a = await env.DB.prepare("SELECT * FROM alerts WHERE id = ?").bind(Number(m[1])).first(); const w = a ? await wake(env, "noon", `تنبيه نون: ${a.title}\n${a.body || ""}\nرقم التنبيه: ${a.id}`) : { ok: false }; await answer(q.id, w.ok ? "مسؤول نون يحللها الحين" : "ما قدرت أصحّيه"); }
     else if ((m = d.match(/^u:(\d+)$/))) { const r = await env.DB.prepare("SELECT * FROM requests WHERE id = ?").bind(Number(m[1])).first(); if (r) await giveTask(env, "manager", `المالك طلب التراجع عن التعديل رقم ${r.id}: ${r.title}`, "تيليقرام"); await answer(q.id, "وصل طلب التراجع للمدير"); }
     return json(200, { ok: true });
   }

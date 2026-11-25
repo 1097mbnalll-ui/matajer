@@ -9,7 +9,7 @@ const ACT_NAME = {
   task_received: "استلم مهمة", task_done: "خلّص مهمة", asked_approval: "طلب موافقتك", auto_approved: "نفّذ تعديل بسيط", approved_by_owner: "وافقت على طلبه",
   rejected_by_owner: "رفضت طلبه", meeting_opened: "فتح اجتماع", meeting_closed: "قفل اجتماع", told_owner: "كلّمك", perm_changed: "تغيّرت صلاحياته",
   rules_changed: "تغيّرت الإعدادات", alert_closed: "قفل تنبيه", routine_linked: "انربطت جلسته", routine_unlinked: "انفصلت جلسته",
-  read_store: "قرأ بيانات المتجر", morning_report: "أرسل تقرير الصباح",
+  read_store: "قرأ بيانات المتجر", read_noon: "قرأ من نون", key_saved: "انحفظ مفتاح نون", skus_set: "تحدّثت قائمة منتجات نون", morning_report: "أرسل تقرير الصباح",
 };
 let S = null;
 
@@ -161,11 +161,15 @@ function openSettings() {
     <p class="muted" style="font-size:13px;margin-top:0">بعد ما تحفظ الرمز: أرسل أي رسالة للبوت في تيليقرام، وبعدها اضغط «اربط تيليقرام».</p>
     <h3>حساب «قارئ المكتب» في المتجر ${S.reader ? "✅" : "⚪️"}</h3>
     <label class="field"><span>الرقم السري (١٢ رقم) ${S.reader ? "(محفوظ ✅)" : ""}</span><input id="cfgPin" type="password" inputmode="numeric" dir="ltr" autocomplete="off"></label>
+    <h3>نون ${S.noon.key ? "✅ مربوط" : "⚪️ مو مربوط"}</h3>
+    <label class="field"><span>ملف المفتاح من نون (.json) ${S.noon.key ? "(محفوظ ✅، ارفع ملف جديد بس إذا تبي تغيّره)" : ""}</span><input id="noonFile" type="file" accept=".json,application/json"></label>
+    <label class="field"><span>المنتجات اللي يراقبها في نون (رموز SKU حقتك، كل واحد بسطر) · الحين ${S.noon.skus}</span><textarea id="noonSkus" dir="ltr" placeholder="SKU-001&#10;SKU-002"></textarea></label>
+    <div class="btns"><button class="btn" id="saveNoon">احفظ نون</button>${S.noon.key ? '<button class="btn" id="testNoon">جرّب الاتصال</button>' : ""}</div>
     <div class="btns"><button class="btn primary" id="saveCfg">احفظ</button>${S.telegram.bot ? `<button class="btn" id="tgSetup">${S.telegram.linked ? "أعد ربط تيليقرام" : "اربط تيليقرام"}</button>` : ""}</div>`);
 }
 
 document.addEventListener("click", async (e) => {
-  const el = e.target.closest("[data-close],[data-emp],[data-meet],[data-perm],[data-send],[data-yes],[data-no],[data-meeting],[data-analyze],[data-link],[data-unlink],#tgSetup,#saveCfg,#btnPending,#btnMeet,#btnSet,#saveRules,#logout");
+  const el = e.target.closest("[data-close],[data-emp],[data-meet],[data-perm],[data-send],[data-yes],[data-no],[data-meeting],[data-analyze],[data-link],[data-unlink],#tgSetup,#saveCfg,#saveNoon,#testNoon,#btnPending,#btnMeet,#btnSet,#saveRules,#logout");
   if (!el) return;
   const d = el.dataset;
   try {
@@ -200,6 +204,16 @@ document.addEventListener("click", async (e) => {
     } else if (el.id === "saveCfg") {
       const r = await api("/api/config", { TELEGRAM_BOT_TOKEN: $("#cfgBot").value.trim() || null, STORE_READER_PIN: $("#cfgPin").value.trim() || null });
       toast(r.ok ? "انحفظ ✅" : "ما انحفظ"); await load(); openSettings();
+    } else if (el.id === "saveNoon") {
+      const f = $("#noonFile").files[0], skus = $("#noonSkus").value.trim();
+      if (f) {
+        const r = await api("/api/noon-key", { text: await f.text() });
+        toast(!r.ok ? "الملف مو ملف مفتاح نون" : r.test.ok ? "انربط نون ✅ والاتصال شغّال" : "انحفظ المفتاح، بس نون رفض الدخول (" + (r.test.status || r.test.code) + ")");
+      }
+      if (skus) { const r = await api("/api/noon-skus", { skus }); toast(`انحفظت ${r.n} منتج للمراقبة`); }
+      await load(); openSettings();
+    } else if (el.id === "testNoon") {
+      const r = await api("/api/noon-test", {}); toast(r.ok ? "الاتصال بنون شغّال ✅" : "نون ما رد صح (" + (r.status || r.code) + ")");
     } else if (el.id === "tgSetup") {
       const r = await api("/api/tg-setup", {});
       toast(r.ok ? "انربط تيليقرام ✅ شيك على البوت" : r.code === "send_message_first" ? "أرسل رسالة للبوت أول وبعدها اضغط" : "ما انربط، جرّب مرة ثانية"); if (r.ok) { await load(); openSettings(); }
