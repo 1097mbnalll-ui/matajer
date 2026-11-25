@@ -38,6 +38,12 @@ function sameText(a, b) {
 const json = (status, body, headers = {}) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers } });
 const clip = (s, n) => String(s ?? "").slice(0, n);
 const nameOf = (k) => TEAM.find((t) => t.key === k)?.name || k;
+// ليش ما صحى الموظف: بكلام واضح للمالك
+const WHY = { not_configured: "ما انربطت جلسته للحين (اضغط عليه في المكتب ← ربط الجلسة)", daily_cap: "وصلنا الحد اليومي للجلسات (تقدر ترفعه من الإعدادات)", fire_failed: "Claude رفض التشغيل (يمكن رمز التشغيل انحذف أو انتهى، اربطه من جديد)" };
+const whyNot = (emp, code) => `${nameOf(emp)} ما صحى: ${WHY[code] || code || "سبب غير معروف"}`;
+// التنبيه يروح للمختص: تنبيهات نون لمسؤول نون، والباقي للمراقب
+const alertOwner = (a) => (String(a.k || "").startsWith("noon") ? "noon" : "monitor");
+const alertPrompt = (a) => alertOwner(a) === "noon" ? `تنبيه نون: ${a.title}\n${a.body || ""}\nرقم التنبيه: ${a.id}` : analysisPrompt(a);
 
 export default {
   async scheduled(event, env, ctx) {
@@ -255,7 +261,8 @@ async function ownerApi(request, env, path, url) {
   if (path === "/api/analyze") {
     const a = await env.DB.prepare("SELECT * FROM alerts WHERE id = ?").bind(Number(body.id)).first();
     if (!a) return json(404, { ok: false });
-    return json(200, await wake(env, "monitor", analysisPrompt(a)));
+    const who = alertOwner(a), w = await wake(env, who, alertPrompt(a));
+    return json(200, { ...w, who: nameOf(who), why: w.ok ? null : whyNot(who, w.code) });
   }
   return json(404, { ok: false, code: "not_found" });
 }
@@ -265,7 +272,7 @@ async function giveTask(env, emp, text, src, before) {
   if (before) await before(r.id);
   await log(env, emp, "task_received", { id: r.id, src });
   const w = await wake(env, emp, `مهمة جديدة من المالك (رقم ${r.id}):\n${text}`);
-  return { ok: true, id: r.id, woke: w.ok, wakeCode: w.code || null, url: w.url || null };
+  return { ok: true, id: r.id, woke: w.ok, wakeCode: w.code || null, why: w.ok ? null : whyNot(emp, w.code), url: w.url || null };
 }
 
 // موافقة أو رفض (من الموقع أو تيليقرام)
@@ -493,8 +500,11 @@ async function telegram(request, env) {
     const d = String(q.data || "");
     let m;
     if ((m = d.match(/^a:(\d+):([yn])$/))) { const [, res] = await decide(env, Number(m[1]), m[2] === "y", "تيليقرام"); await answer(q.id, res.ok ? (m[2] === "y" ? "تمت الموافقة" : "انرفض") : "انحسم من قبل"); }
-    else if ((m = d.match(/^z:(\d+)$/))) { const a = await env.DB.prepare("SELECT * FROM alerts WHERE id = ?").bind(Number(m[1])).first(); const w = a ? await wake(env, "monitor", analysisPrompt(a)) : { ok: false }; await answer(q.id, w.ok ? "المراقب يحللها الحين" : "ما قدرت أصحّي المراقب"); }
-    else if ((m = d.match(/^n:(\d+)$/))) { const a = await env.DB.prepare("SELECT * FROM alerts WHERE id = ?").bind(Number(m[1])).first(); const w = a ? await wake(env, "noon", `تنبيه نون: ${a.title}\n${a.body || ""}\nرقم التنبيه: ${a.id}`) : { ok: false }; await answer(q.id, w.ok ? "مسؤول نون يحللها الحين" : "ما قدرت أصحّيه"); }
+    else if ((m = d.match(/^[zn]:(\d+)$/))) {
+      const a = await env.DB.prepare("SELECT * FROM alerts WHERE id = ?").bind(Number(m[1])).first();
+      if (!a) await answer(q.id, "التنبيه ما عاد موجود");
+      else { const who = alertOwner(a), w = await wake(env, who, alertPrompt(a)); await answer(q.id, w.ok ? `${nameOf(who)} يحللها الحين` : "ما صحى"); if (!w.ok) await tg(env, `⚠️ ${whyNot(who, w.code)}`); }
+    }
     else if ((m = d.match(/^u:(\d+)$/))) { const r = await env.DB.prepare("SELECT * FROM requests WHERE id = ?").bind(Number(m[1])).first(); if (r) await giveTask(env, "manager", `المالك طلب التراجع عن التعديل رقم ${r.id}: ${r.title}`, "تيليقرام"); await answer(q.id, "وصل طلب التراجع للمدير"); }
     return json(200, { ok: true });
   }
@@ -505,6 +515,6 @@ async function telegram(request, env) {
   const route = t.startsWith("/i ") ? ["ideas", t.slice(3)] : t.startsWith("/s ") ? ["assistant", t.slice(3)] : t.startsWith("/m ") ? ["manager", t.slice(3)] : t.startsWith("/") ? null : ["manager", t];
   if (!route) { await tg(env, "اكتب رسالتك للمدير مباشرة، أو:\n/i فكرة لمطوّر الأفكار\n/s مهمة للمساعد الشخصي"); return json(200, { ok: true }); }
   const r = await giveTask(env, route[0], clip(route[1], 4000), "تيليقرام");
-  await tg(env, r.woke ? `👍 وصلت لـ${nameOf(route[0])} وبدأ يشتغل.` : `📥 انحفظت عند ${nameOf(route[0])} (ما قدرت أصحّيه الحين: ${r.wakeCode}).`);
+  await tg(env, r.woke ? `👍 وصلت لـ${nameOf(route[0])} وبدأ يشتغل.` : `📥 انحفظت المهمة. ${whyNot(route[0], r.wakeCode)}`);
   return json(200, { ok: true });
 }

@@ -19,7 +19,7 @@ async function api(path, body) {
   if (r.status === 401 && j.code === "login") { showLogin(); throw new Error("login"); }
   return { status: r.status, ...j };
 }
-function toast(t) { const el = $("#toast"); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (el.hidden = true), 2600); }
+function toast(t) { const el = $("#toast"); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (el.hidden = true), Math.max(2600, t.length * 70)); }
 const when = (t) => new Date(t).toLocaleString("ar-SA-u-nu-arab", { weekday: "short", hour: "numeric", minute: "2-digit" });
 
 // ---------- الدخول ----------
@@ -197,13 +197,13 @@ document.addEventListener("click", async (e) => {
         file = { name: fl.name, type: fl.type, b64: btoa(bin) };
       }
       const r = await api("/api/task", { emp: d.send, text, file });
-      toast(r.woke ? "وصلت وبدأ يشتغل" : r.wakeCode === "daily_cap" ? "انحفظت، بس وصلنا سقف اليوم" : "انحفظت عنده (ما انربطت جلسته للحين)");
+      toast(r.woke ? "وصلت وبدأ يشتغل" : "انحفظت المهمة. " + (r.why || ""));
       closeSheet(); load();
     } else if (d.yes || d.no) {
       const r = await api("/api/decide", { id: Number(d.yes || d.no), yes: !!d.yes });
       toast(r.ok ? (d.yes ? "تمت الموافقة" : "انرفض") : "انحسم من قبل"); await load(); openPending();
     } else if (d.analyze) {
-      const r = await api("/api/analyze", { id: Number(d.analyze) }); toast(r.ok ? "المراقب يحللها الحين" : "ما قدرت أصحّي المراقب");
+      const r = await api("/api/analyze", { id: Number(d.analyze) }); toast(r.ok ? `${r.who} يحللها الحين` : r.why || "ما صحى");
     } else if (el.id === "saveRules") {
       await api("/api/rules", { cashLimit: Number($("#cashLimit").value), wakeOn: $("#wakeOn").value, fireCap: Number($("#fireCap").value), meetingCap: Number($("#meetingCap").value) });
       toast("انحفظت"); closeSheet(); load();

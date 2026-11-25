@@ -357,3 +357,18 @@ test("ملف مرفق بالمهمة: الموظف نفسه بس ينزّله", 
   assert.equal((await A(env, "/agent/file", { emp: "noon", task: id })).status, 404);
   assert.equal((await call(env, "/api/task", { cookie: c, body: { emp: "pricing", text: "x", file: { name: "a", b64: "!!" } } })).status, 400);
 });
+
+test("«حلّلها»: يوضح ليش ما صحى، وتنبيهات نون تروح لمسؤول نون", async () => {
+  const env = makeEnv(); delete env.ROUTINE_MONITOR_ID; env.ROUTINE_NOON_ID = "trig_n"; env.ROUTINE_NOON_TOKEN = "tok_n";
+  const c = await login(env);
+  const t = Date.now();
+  await env.DB.prepare("INSERT INTO alerts (k, level, title, body, first, last) VALUES ('out:x','important','منتج خلص','',?,?)").bind(t, t).run().catch(async () => { await call(env, "/api/state", { cookie: c }); });
+  await call(env, "/api/state", { cookie: c });
+  await env.DB.prepare("INSERT INTO alerts (k, level, title, body, first, last) VALUES ('out:y','important','منتج خلص','',?,?)").bind(t, t).run();
+  await env.DB.prepare("INSERT INTO alerts (k, level, title, body, first, last) VALUES ('noon_low:A','important','نون: حليب قرّب يخلص','',?,?)").bind(t, t).run();
+  const ids = (await env.DB.prepare("SELECT id, k FROM alerts").all()).results;
+  const mon = await call(env, "/api/analyze", { cookie: c, body: { id: ids.find((a) => a.k === "out:y").id } });
+  assert.equal(mon.body.ok, false); assert.match(mon.body.why, /المراقب ما صحى: ما انربطت جلسته/);
+  const nn = await call(env, "/api/analyze", { cookie: c, body: { id: ids.find((a) => a.k === "noon_low:A").id } });
+  assert.equal(nn.body.ok, true); assert.equal(nn.body.who, "مسؤول نون");
+});
