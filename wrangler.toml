@@ -8,6 +8,11 @@ binding = "DB"
 database_name = "ohod-office"
 database_id = "3915d543-7407-4480-a8e7-a9a8bc9781bc"
 
+# ربط داخلي بخادم المتجر (Cloudflare يمنع worker يكلم worker ثاني بنفس الحساب عن طريق workers.dev)
+[[services]]
+binding = "STORE"
+service = "ohod-admin"
+
 # المراقب كل ٥ دقايق
 [triggers]
 crons = ["*/5 * * * *"]

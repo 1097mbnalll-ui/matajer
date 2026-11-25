@@ -73,6 +73,9 @@
 - حد كاش المندوب: افتراضي ٥٠٠ ر.س (يتغير من الموقع). حدود التأخير نفسها من خادم المتجر (١٠ / ٣٠ / ٤٥ دقيقة).
 - نون: المالك أخذ المفتاح. **ما انجرب على حساب نون الحقيقي للحين** (المالك يرفع الملف من الإعدادات ويضغط «جرّب الاتصال»).
 
+### الاتصال بخادم المتجر
+- **Service Binding** `STORE` ← `ohod-admin` (في `wrangler.toml`). Cloudflare يمنع worker يكلم worker ثاني بنفس الحساب عن طريق رابط workers.dev (يرد 404 / خطأ 1042)، فهذا هو الطريق الأساسي، و`STORE_API` احتياط للاختبارات.
+
 ### نون (من التوثيق الرسمي noon-docs.noonpartners.dev، انضاف لبيئة «متاجر أحد»)
 - المفتاح: ملف `.json` من Seller Lab ← User access ← API Users (`key_id`, `private_key`, `project_code`). ينرفع من إعدادات المكتب (`/api/noon-key`)، ينحفظ في D1 وما يرجع.
 - الدخول: JWT RS256 (`sub`=key_id, `iat` بالثواني, `jti`) ← `POST https://noon-api-gateway.noon.partners/identity/public/v1/api/login` ← كوكي (٣٠ يوم). `User-Agent` إلزامي.

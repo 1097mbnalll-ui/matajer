@@ -387,3 +387,12 @@ test("ربط الجلسة: رقم المهمة يتعبى لحاله، والر�
   assert.equal((await call(env, "/api/routine", { cookie: c, body: { emp: "monitor", token: "sk-ant-abc" } })).body.code, "token_short");
   assert.equal((await call(env, "/api/routine", { cookie: c, body: { emp: "monitor", token: "sk-ant-oat01-jMtMHZOt...WwAA" } })).body.code, "token_masked");
 });
+
+test("الربط الداخلي بخادم المتجر (Service Binding) يتقدّم على الرابط", async () => {
+  const env = makeEnv({ drivers: [{ id: "d1", name: "سالم", balance: 20 }] });
+  const viaBinding = [];
+  env.STORE = { fetch: async (req) => { const u = new URL(req.url); viaBinding.push(u.pathname); return env.fetch("https://store.test" + u.pathname, { method: req.method, headers: Object.fromEntries(req.headers), body: req.method === "POST" ? await req.text() : undefined }); } };
+  const r = await A(env, "/agent/store", { emp: "manager", path: "/admin/cash" });
+  assert.equal(r.body.data.drivers[0].name, "سالم");
+  assert.deepEqual(viaBinding, ["/enter", "/admin/cash"]);
+});

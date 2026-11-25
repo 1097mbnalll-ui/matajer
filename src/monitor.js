@@ -6,6 +6,12 @@ import { tg, wake, levelIcon } from "./notify.js";
 export const DEFAULT_RULES = { cashLimit: 500, lowStockMin: 1, wakeOn: "urgent" };
 
 // ---------- الاتصال بخادم المتجر ----------
+// Cloudflare ما يسمح لخادم يكلم خادم ثاني بنفس الحساب عن طريق رابط workers.dev (يرد 404 / خطأ 1042)،
+// فالطريق الأساسي هو الربط الداخلي (Service Binding: env.STORE)، والرابط احتياط للاختبارات
+function storeFetch(env, path, init) {
+  if (env.STORE && typeof env.STORE.fetch === "function") return env.STORE.fetch(new Request("https://ohod-admin.internal" + path, init));
+  return (env.fetch || fetch)(env.STORE_API.replace(/\/+$/, "") + path, init);
+}
 async function storeLogin(env) {
   const r = await storePost(env, "/enter", { pin: env.STORE_READER_PIN });
   if (!r.ok || !r.body.token || r.body.user?.role !== "reader") return null; // لازم يكون حساب «قارئ المكتب» بالذات
@@ -13,9 +19,8 @@ async function storeLogin(env) {
   return r.body.token;
 }
 async function storePost(env, path, body) {
-  const f = env.fetch || fetch;
   try {
-    const res = await f(env.STORE_API.replace(/\/+$/, "") + path, {
+    const res = await storeFetch(env, path, {
       method: "POST",
       headers: { "Content-Type": "application/json", Origin: env.STORE_ORIGIN || "" },
       body: JSON.stringify(body || {}),
@@ -42,7 +47,7 @@ export async function collect(env, opts = {}) {
   // ١) الخادم شغّال؟
   checked.add("down");
   let up = false;
-  try { const r = await f(env.STORE_API.replace(/\/+$/, "") + "/ping"); up = r.ok; } catch { up = false; }
+  try { const r = await storeFetch(env, "/ping"); up = r.ok; } catch { up = false; }
   if (!up) { found.push({ k: "down", level: "urgent", title: "خادم المتجر ما يرد", body: "الزبائن ممكن ما يقدرون يطلبون الحين." }); return { found, checked }; }
 
   if (!env.STORE_READER_PIN) return { found, checked, note: "reader_not_configured" };
