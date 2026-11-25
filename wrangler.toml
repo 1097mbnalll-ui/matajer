@@ -1,0 +1,23 @@
+# إعداد خادم «مكتب متاجر أحد». ما فيه أي سر هنا: الأسرار تنحط في Cloudflare (Secrets)
+name = "ohod-office"
+main = "src/worker.js"
+compatibility_date = "2026-11-01"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*", "/agent/*", "/tg"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ohod-office"
+database_id = "REPLACE_AFTER_CREATING_D1"
+
+# المراقب كل ٥ دقايق
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+STORE_API = "https://ohod-admin.1097mbnalll.workers.dev"
+STORE_ORIGIN = ""
+STORE_DATA_URL = ""
