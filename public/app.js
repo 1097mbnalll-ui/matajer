@@ -125,6 +125,7 @@ async function openEmp(key) {
   openSheet(`<h2>${esc(t.name)}</h2><div class="muted">${esc(t.job)} · ${STATUS_NAME[t.status]}${t.direct ? " · يكلمك مباشرة" : " · يرفع للمدير العام"}</div>
     ${t.sessionUrl ? `<p><a href="${esc(t.sessionUrl)}" target="_blank" rel="noopener">شوف شغله لايف ↗</a></p>` : ""}
     <h3>أعطه شغلة</h3><textarea id="taskText" placeholder="${key === "ideas" ? "اكتب فكرتك…" : "وش تبيه يسوي؟"}"></textarea>
+    <label class="field" style="margin-top:8px"><span class="muted">إرفاق ملف (إكسل أو غيره، حد ١ ميقا)</span><input id="taskFile" type="file"></label>
     <div class="btns"><button class="btn primary" data-send="${key}">أرسل</button></div>
     ${tasks ? `<h3>آخر المهام وردوده</h3>${tasks}` : ""}
     <h3>ربط الجلسة ${t.linked ? "✅" : "⚪️"}</h3>
@@ -188,7 +189,14 @@ document.addEventListener("click", async (e) => {
       if (r.ok) { S.team.find((t) => t.key === key).perms = r.perms; el.parentElement.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b === el)); toast("تغيّرت الصلاحية"); }
     } else if (d.send) {
       const text = $("#taskText").value.trim(); if (!text) return;
-      const r = await api("/api/task", { emp: d.send, text });
+      const fl = $("#taskFile") && $("#taskFile").files[0];
+      let file = null;
+      if (fl) {
+        if (fl.size > 1024 * 1024) { toast("الملف أكبر من ١ ميقا"); return; }
+        const b = new Uint8Array(await fl.arrayBuffer()); let bin = ""; for (let i = 0; i < b.length; i += 8192) bin += String.fromCharCode(...b.subarray(i, i + 8192));
+        file = { name: fl.name, type: fl.type, b64: btoa(bin) };
+      }
+      const r = await api("/api/task", { emp: d.send, text, file });
       toast(r.woke ? "وصلت وبدأ يشتغل" : r.wakeCode === "daily_cap" ? "انحفظت، بس وصلنا سقف اليوم" : "انحفظت عنده (ما انربطت جلسته للحين)");
       closeSheet(); load();
     } else if (d.yes || d.no) {

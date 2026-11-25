@@ -182,7 +182,14 @@ async function ownerApi(request, env, path, url) {
     if (!teamKeys.has(body.emp)) return json(400, { ok: false, code: "bad_emp" });
     const text = clip(body.text, 4000).trim();
     if (!text) return json(400, { ok: false, code: "empty" });
-    return json(200, await giveTask(env, body.emp, text, "الموقع"));
+    // ملف مرفق (مثل إكسل الأسعار): يتخزن في قاعدة المكتب الخاصة، والموظف ينزّله برمز جلسته
+    const f = body.file;
+    if (f && (typeof f.b64 !== "string" || f.b64.length > 1400000 || !/^[A-Za-z0-9+/=]+$/.test(f.b64))) return json(400, { ok: false, code: "file_too_big_or_bad" });
+    const note = f ? `\n[مرفق: ${clip(f.name, 120)} — نزّله بـ POST /agent/file {"emp","task":<رقم المهمة>}]` : "";
+    const r = await giveTask(env, body.emp, text + note, "الموقع", f ? async (id) => {
+      await env.DB.prepare("INSERT INTO files (task, name, type, size, b64, at) VALUES (?, ?, ?, ?, ?, ?)").bind(id, clip(f.name, 120), clip(f.type, 100), Math.floor(f.b64.length * 3 / 4), f.b64, now()).run();
+    } : null);
+    return json(200, r);
   }
   if (path === "/api/rules") {
     const r = { ...DEFAULT_RULES, ...(await getSetting(env, "rules", {})) };
@@ -253,8 +260,9 @@ async function ownerApi(request, env, path, url) {
   return json(404, { ok: false, code: "not_found" });
 }
 
-async function giveTask(env, emp, text, src) {
+async function giveTask(env, emp, text, src, before) {
   const r = await env.DB.prepare("INSERT INTO tasks (at, emp, text, src) VALUES (?, ?, ?, ?) RETURNING id").bind(now(), emp, text, src).first();
+  if (before) await before(r.id);
   await log(env, emp, "task_received", { id: r.id, src });
   const w = await wake(env, emp, `مهمة جديدة من المالك (رقم ${r.id}):\n${text}`);
   return { ok: true, id: r.id, woke: w.ok, wakeCode: w.code || null, url: w.url || null };
@@ -312,6 +320,13 @@ async function agentApi(request, env, path, url) {
     await tg(env, `💬 ${nameOf(emp)}:\n${text}`);
     await log(env, emp, "told_owner", { text: text.slice(0, 300) });
     return json(200, { ok: true });
+  }
+  if (path === "/agent/file") { // ملف مرفق بمهمة الموظف نفسه
+    const t = await env.DB.prepare("SELECT id FROM tasks WHERE id = ? AND emp = ?").bind(Number(body.task), emp).first();
+    if (!t) return json(404, { ok: false, code: "not_your_task" });
+    const fl = (await env.DB.prepare("SELECT name, type, size, b64 FROM files WHERE task = ?").bind(t.id).all()).results || [];
+    await log(env, emp, "file_read", { task: t.id, n: fl.length });
+    return json(200, { ok: true, files: fl });
   }
   if (path === "/agent/task-done") {
     const t = await env.DB.prepare("SELECT * FROM tasks WHERE id = ? AND emp = ?").bind(Number(body.id), emp).first();

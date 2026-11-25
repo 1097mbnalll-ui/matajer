@@ -344,3 +344,16 @@ test("رد الموظف على مهمة المالك يظهر في المكتب 
   st = await call(env, "/api/state", { cookie: c });
   assert.equal(st.body.replies.length, 0);
 });
+
+test("ملف مرفق بالمهمة: الموظف نفسه بس ينزّله", async () => {
+  const env = makeEnv(); env.ROUTINE_PRICING_ID = "trig_p"; env.ROUTINE_PRICING_TOKEN = "tok_p";
+  const c = await login(env);
+  const b64 = Buffer.from("sku,price\nA,5").toString("base64");
+  const id = (await call(env, "/api/task", { cookie: c, body: { emp: "pricing", text: "قارن الأسعار", file: { name: "prices.xlsx", type: "x", b64 } } })).body.id;
+  assert.match(env.fired.at(-1).body.text, /مرفق: prices.xlsx/);
+  const tok = env.fired.at(-1).body.text.match(/[a-f0-9]{48}/)[0];
+  const r = await call(env, "/agent/file", { body: { emp: "pricing", task: id }, agent: tok });
+  assert.equal(Buffer.from(r.body.files[0].b64, "base64").toString(), "sku,price\nA,5");
+  assert.equal((await A(env, "/agent/file", { emp: "noon", task: id })).status, 404);
+  assert.equal((await call(env, "/api/task", { cookie: c, body: { emp: "pricing", text: "x", file: { name: "a", b64: "!!" } } })).status, 400);
+});
