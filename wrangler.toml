@@ -11,7 +11,7 @@ run_worker_first = ["/api/*", "/agent/*", "/tg"]
 [[d1_databases]]
 binding = "DB"
 database_name = "ohod-office"
-database_id = "REPLACE_AFTER_CREATING_D1"
+database_id = "3915d543-7407-4480-a8e7-a9a8bc9781bc"
 
 # المراقب كل ٥ دقايق
 [triggers]
