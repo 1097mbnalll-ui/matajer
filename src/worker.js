@@ -145,10 +145,17 @@ async function ownerApi(request, env, path, url) {
     const pending = (await env.DB.prepare("SELECT * FROM requests WHERE status = 'pending' ORDER BY id DESC").all()).results || [];
     const alerts = (await env.DB.prepare("SELECT * FROM alerts WHERE open = 1 ORDER BY CASE level WHEN 'urgent' THEN 0 WHEN 'important' THEN 1 ELSE 2 END, id DESC LIMIT 50").all()).results || [];
     const meetings = (await env.DB.prepare("SELECT * FROM meetings ORDER BY id DESC LIMIT 10").all()).results || [];
+    // ردود الموظفين على مهام المالك اللي ما شافها للحين
+    const seenAt = (await env.DB.prepare("SELECT v FROM seen WHERE k = 'replies'").first())?.v || 0;
+    const replies = (await env.DB.prepare("SELECT id, emp, text, result, done FROM tasks WHERE status = 'done' AND src != 'المدير العام' AND done > ? ORDER BY done DESC LIMIT 10").bind(seenAt).all()).results || [];
     const team = await teamState(env);
     for (const t of team) { const r = await routineOf(env, t.key); t.linked = !!(r.id && r.token); }
-    return json(200, { ok: true, team, telegram: { bot: !!env.TELEGRAM_BOT_TOKEN, linked: !!(await ownerChat(env)) }, reader: !!env.STORE_READER_PIN, noon: { key: !!(await noonKey(env)), skus: ((await getSetting(env, "noon_skus")) || []).length }, areas: AREAS, levels: LEVELS, pending, alerts, meetings,
+    return json(200, { ok: true, team, replies, telegram: { bot: !!env.TELEGRAM_BOT_TOKEN, linked: !!(await ownerChat(env)) }, reader: !!env.STORE_READER_PIN, noon: { key: !!(await noonKey(env)), skus: ((await getSetting(env, "noon_skus")) || []).length }, areas: AREAS, levels: LEVELS, pending, alerts, meetings,
       rules: { ...DEFAULT_RULES, ...(await getSetting(env, "rules", {})) }, caps: { fire: await getSetting(env, "fire_cap", 60), meetings: await getSetting(env, "meeting_cap", 5) } });
+  }
+  if (path === "/api/replies-seen") {
+    await env.DB.prepare("INSERT INTO seen (k, v) VALUES ('replies', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").bind(now()).run();
+    return json(200, { ok: true });
   }
   if (path === "/api/log") {
     const emp = url.searchParams.get("emp");
@@ -311,7 +318,8 @@ async function agentApi(request, env, path, url) {
     if (!t) return json(404, { ok: false });
     await env.DB.prepare("UPDATE tasks SET status = 'done', result = ?, done = ? WHERE id = ?").bind(clip(body.result, 4000), now(), t.id).run();
     await log(env, emp, "task_done", { id: t.id });
-    if (TEAM.find((x) => x.key === emp)?.direct) await tg(env, `✅ ${nameOf(emp)} خلّص مهمتك رقم ${t.id}:\n${clip(body.result, 3000)}`);
+    // المهمة من المالك نفسه: الرد يوصله مباشرة، أياً كان الموظف
+    if (t.src !== "المدير العام" || TEAM.find((x) => x.key === emp)?.direct) await tg(env, `✅ ${nameOf(emp)} خلّص مهمتك رقم ${t.id}:\n${clip(body.result, 3000)}`);
     return json(200, { ok: true });
   }
   if (path === "/agent/assign") { // المدير يوزّع شغل على موظف

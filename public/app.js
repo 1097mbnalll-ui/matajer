@@ -105,7 +105,10 @@ async function load() {
   $("#nPending").textContent = S.pending.length;
   $("#btnPending").classList.toggle("has", S.pending.length > 0);
   $("#clock").textContent = new Date().toLocaleDateString("ar-SA-u-nu-arab", { weekday: "long", day: "numeric", month: "long" });
-  $("#alerts").innerHTML = S.alerts.slice(0, 6).map((a) => `<div class="alert ${a.level}"><div class="grow"><div class="t">${ALERT_NAME[a.level]} · ${esc(a.title)}</div><div class="b">${esc(a.body || "")} · ${when(a.first)}</div></div><button class="btn small" data-analyze="${a.id}">حلّلها</button></div>`).join("");
+  const nm = (k) => S.team.find((t) => t.key === k)?.name || k;
+  $("#alerts").innerHTML = (S.replies || []).map((q) => `<div class="alert reply"><div class="grow"><div class="t">💬 رد ${esc(nm(q.emp))} على: ${esc(q.text.slice(0, 60))}</div><div class="b" style="white-space:pre-wrap;color:var(--ink)">${esc(q.result || "")}</div></div></div>`).join("")
+    + ((S.replies || []).length ? '<button class="btn small" id="repliesSeen">قريتها ✓</button>' : "")
+    + S.alerts.slice(0, 6).map((a) => `<div class="alert ${a.level}"><div class="grow"><div class="t">${ALERT_NAME[a.level]} · ${esc(a.title)}</div><div class="b">${esc(a.body || "")} · ${when(a.first)}</div></div><button class="btn small" data-analyze="${a.id}">حلّلها</button></div>`).join("");
   $("#teamList").innerHTML = S.team.map((t) => `<button class="row" data-emp="${t.key}"><span class="dot ${t.status}"></span><span><div class="n">${esc(t.name)}</div><div class="j">${STATUS_NAME[t.status]} · ${esc(t.job)}</div></span></button>`).join("");
   drawOffice();
 }
@@ -117,13 +120,13 @@ async function openEmp(key) {
   const r = await api(`/api/log?emp=${key}`);
   const perms = S.areas.map((a) => `<div class="perm"><div class="lbl"><span>${esc(a.name)}</span>${a.big ? '<span class="note">كبير: ينتظر موافقتك دايماً</span>' : ""}</div>
     <div class="seg">${S.levels.map((l) => `<button data-perm="${a.key}" data-level="${l}" class="${t.perms[a.key] === l ? "on" : ""}">${LEVEL_NAME[l]}</button>`).join("")}</div></div>`).join("");
-  const tasks = (r.tasks || []).slice(0, 5).map((k) => `<div class="logline"><time>${when(k.at)}</time><span>${k.status === "open" ? "⏳" : "✅"} ${esc(k.text.slice(0, 120))}</span></div>`).join("");
+  const tasks = (r.tasks || []).slice(0, 5).map((k) => `<div class="req"><div class="meta">${when(k.at)} · ${k.status === "open" ? "⏳ يشتغل عليها" : "✅ خلّصها"}</div><b>${esc(k.text.slice(0, 200))}</b>${k.result ? `<pre>${esc(k.result)}</pre>` : ""}</div>`).join("");
   const log = (r.log || []).map((l) => `<div class="logline"><time>${when(l.at)}</time><span>${esc(ACT_NAME[l.act] || l.act)}</span></div>`).join("") || '<div class="empty">ما سوّى شي للحين</div>';
   openSheet(`<h2>${esc(t.name)}</h2><div class="muted">${esc(t.job)} · ${STATUS_NAME[t.status]}${t.direct ? " · يكلمك مباشرة" : " · يرفع للمدير العام"}</div>
     ${t.sessionUrl ? `<p><a href="${esc(t.sessionUrl)}" target="_blank" rel="noopener">شوف شغله لايف ↗</a></p>` : ""}
     <h3>أعطه شغلة</h3><textarea id="taskText" placeholder="${key === "ideas" ? "اكتب فكرتك…" : "وش تبيه يسوي؟"}"></textarea>
     <div class="btns"><button class="btn primary" data-send="${key}">أرسل</button></div>
-    ${tasks ? `<h3>آخر المهام</h3>${tasks}` : ""}
+    ${tasks ? `<h3>آخر المهام وردوده</h3>${tasks}` : ""}
     <h3>ربط الجلسة ${t.linked ? "✅" : "⚪️"}</h3>
     <p class="muted" style="margin:0 0 8px;font-size:13px">${t.linked ? "مربوط: المكتب يقدر يصحّيه." : "من claude.ai/code/routines: افتح مهمته، أضف API trigger، وانسخ الرقم والرمز هنا."}</p>
     <details${t.linked ? "" : " open"}><summary class="muted">${t.linked ? "غيّر الربط" : "اربط الحين"}</summary>
@@ -169,7 +172,7 @@ function openSettings() {
 }
 
 document.addEventListener("click", async (e) => {
-  const el = e.target.closest("[data-close],[data-emp],[data-meet],[data-perm],[data-send],[data-yes],[data-no],[data-meeting],[data-analyze],[data-link],[data-unlink],#tgSetup,#saveCfg,#saveNoon,#testNoon,#btnPending,#btnMeet,#btnSet,#saveRules,#logout");
+  const el = e.target.closest("[data-close],[data-emp],[data-meet],[data-perm],[data-send],[data-yes],[data-no],[data-meeting],[data-analyze],[data-link],[data-unlink],#tgSetup,#saveCfg,#saveNoon,#testNoon,#repliesSeen,#btnPending,#btnMeet,#btnSet,#saveRules,#logout");
   if (!el) return;
   const d = el.dataset;
   try {
@@ -212,6 +215,8 @@ document.addEventListener("click", async (e) => {
       }
       if (skus) { const r = await api("/api/noon-skus", { skus }); toast(`انحفظت ${r.n} منتج للمراقبة`); }
       await load(); openSettings();
+    } else if (el.id === "repliesSeen") {
+      await api("/api/replies-seen", {}); load();
     } else if (el.id === "testNoon") {
       const r = await api("/api/noon-test", {}); toast(r.ok ? "الاتصال بنون شغّال ✅" : "نون ما رد صح (" + (r.status || r.code) + ")");
     } else if (el.id === "tgSetup") {

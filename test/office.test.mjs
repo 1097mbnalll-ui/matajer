@@ -331,3 +331,16 @@ test("الواجهة مدموجة في الخادم وتنفتح بدون ملف
   assert.match((await worker.fetch(new Request(BASE + "/app.js"), env, ctx)).headers.get("Content-Type"), /javascript/);
   assert.equal((await worker.fetch(new Request(BASE + "/nothing"), env, ctx)).status, 404);
 });
+
+test("رد الموظف على مهمة المالك يظهر في المكتب ويوصل تيليقرام، حتى لو مو من القنوات المباشرة", async () => {
+  const env = makeEnv(); env.ROUTINE_NOON_ID = "trig_n"; env.ROUTINE_NOON_TOKEN = "tok_n";
+  const c = await login(env);
+  const id = (await call(env, "/api/task", { cookie: c, body: { emp: "noon", text: "مبيعات اليوم" } })).body.id;
+  await A(env, "/agent/task-done", { emp: "noon", id, result: "طلب واحد بـ ٤٥ ر.س" });
+  assert.match(env.sent.at(-1).text, /مسؤول نون خلّص مهمتك/);
+  let st = await call(env, "/api/state", { cookie: c });
+  assert.equal(st.body.replies[0].result, "طلب واحد بـ ٤٥ ر.س");
+  await call(env, "/api/replies-seen", { cookie: c, body: {} });
+  st = await call(env, "/api/state", { cookie: c });
+  assert.equal(st.body.replies.length, 0);
+});
