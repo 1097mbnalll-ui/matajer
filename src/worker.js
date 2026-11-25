@@ -425,7 +425,8 @@ async function agentApi(request, env, path, url) {
   if (path === "/agent/brief") { // أول شي يسويه الموظف: وش عندي؟
     const tasks = (await env.DB.prepare("SELECT id, at, text, src FROM tasks WHERE emp = ? AND status = 'open' ORDER BY id").bind(emp).all()).results || [];
     const mine = (await env.DB.prepare("SELECT id, title, status, decided FROM requests WHERE emp = ? ORDER BY id DESC LIMIT 20").bind(emp).all()).results || [];
-    const alerts = (await env.DB.prepare("SELECT id, level, title, body, first FROM alerts WHERE open = 1 ORDER BY id DESC LIMIT 30").all()).results || [];
+    // كل موظف يشوف تنبيهات مجاله: راكان تنبيهات نون بس، والباقين تنبيهات البقالة (عشان ما تختلط)
+    const alerts = (await env.DB.prepare(`SELECT id, level, title, body, first FROM alerts WHERE open = 1 AND k ${emp === "noon" ? "LIKE" : "NOT LIKE"} 'noon%' ORDER BY id DESC LIMIT 30`).all()).results || [];
     const meetings = (await env.DB.prepare("SELECT id, topic, by, status FROM meetings WHERE status = 'open' ORDER BY id").all()).results || [];
     const recent = (await env.DB.prepare("SELECT at, act FROM logs WHERE emp = ? AND act NOT IN ('woke','task_received','wake_queued','read_store','read_noon') ORDER BY id DESC LIMIT 8").bind(emp).all()).results || [];
     const instructions = `${AGENT_TEXT.common || ""}\n\n${AGENT_TEXT[emp] || ""}`;
@@ -556,6 +557,8 @@ async function agentApi(request, env, path, url) {
   }
   // قراءة بيانات المتجر عن طريق المكتب (حساب «قارئ المكتب»، قراءة بس)
   if (path === "/agent/store") {
+    // راكان (نون) ما يقرأ بيانات البقالة أبداً: عشان ما يخلط أرقام متاجر أحد بأرقام نون (قرار المالك ٢٥ نوفمبر ٢٠٢٦)
+    if (emp === "noon") return json(403, { ok: false, code: "noon_reads_noon_only", message: "أنت مسؤول نون: بيانات البقالة (متاجر أحد) مو لك. استخدم /agent/noon و /agent/noon-export بس. لو بيانات نون ما ظهرت، قل للمالك كذا بوضوح، ولا تعوّضها بأرقام البقالة." });
     const allowed = ["/admin/alerts", "/admin/stock", "/admin/today", "/admin/cash"];
     if (!allowed.includes(body.path)) return json(400, { ok: false, code: "path_not_allowed", allowed });
     const q = body.path === "/admin/stock" ? (body.summary ? { summary: true } : Array.isArray(body.ids) ? { ids: body.ids.slice(0, 500).map(String) } : {}) : {};

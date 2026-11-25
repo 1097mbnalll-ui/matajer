@@ -481,3 +481,18 @@ test("الاستهلاك: يعد الجلسات الفعلية اليوم ولك
   const u = (await call(env, "/api/usage", { cookie: c })).body;
   assert.equal(u.today.sessions, 3); assert.equal(u.today.by.manager, 1); assert.equal(u.today.usd, 1.05);
 });
+
+test("راكان (نون) ما يقرأ بيانات البقالة، ويشوف تنبيهات نون بس", async () => {
+  const env = makeEnv({ drivers: [] });
+  const t = Date.now();
+  await call(env, "/api/setup-status");
+  await env.DB.prepare("INSERT INTO alerts (k, level, title, body, first, last) VALUES ('out:all','important','2106 منتج خلص','',?,?)").bind(t, t).run();
+  await env.DB.prepare("INSERT INTO alerts (k, level, title, body, first, last) VALUES ('noon_low:A','important','نون: حليب','',?,?)").bind(t, t).run();
+  const r = await A(env, "/agent/store", { emp: "noon", path: "/admin/today" });
+  assert.equal(r.body.code, "noon_reads_noon_only");
+  const b = await A(env, "/agent/brief", { emp: "noon" });
+  assert.deepEqual(b.body.alerts.map((a) => a.title), ["نون: حليب"]);
+  const m = await A(env, "/agent/brief", { emp: "monitor" });
+  assert.deepEqual(m.body.alerts.map((a) => a.title), ["2106 منتج خلص"]);
+  assert.match(b.body.instructions, /نون ≠ متاجر أحد/);
+});
