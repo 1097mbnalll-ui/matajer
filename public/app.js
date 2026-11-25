@@ -131,7 +131,7 @@ async function openEmp(key) {
     <h3>ربط الجلسة ${t.linked ? "✅" : "⚪️"}</h3>
     <p class="muted" style="margin:0 0 8px;font-size:13px">${t.linked ? "مربوط: المكتب يقدر يصحّيه." : "من claude.ai/code/routines: افتح مهمته، أضف API trigger، وانسخ الرقم والرمز هنا."}</p>
     <details${t.linked ? "" : " open"}><summary class="muted">${t.linked ? "غيّر الربط" : "اربط الحين"}</summary>
-      <label class="field"><span>رقم المهمة (trig_…)</span><input id="rtId" dir="ltr" autocomplete="off"></label>
+      <label class="field"><span>رقم المهمة (trig_…)</span><input id="rtId" dir="ltr" autocomplete="off" value="${esc(t.routine || "")}"></label>
       <label class="field"><span>الرمز: يبدأ بـ <b dir="ltr">sk-ant-</b> (مو الرابط اللي يبدأ بـ https). ينحفظ مخفي</span><input id="rtTok" type="password" dir="ltr" autocomplete="off"></label>
       <div class="btns"><button class="btn primary" data-link="${key}">احفظ الربط</button>${t.linked ? `<button class="btn danger" data-unlink="${key}">افصل</button>` : ""}</div></details>
     <h3>بطاقة الصلاحيات</h3>${perms}
@@ -209,7 +209,7 @@ document.addEventListener("click", async (e) => {
       toast("انحفظت"); closeSheet(); load();
     } else if (d.link) {
       const r = await api("/api/routine", { emp: d.link, id: $("#rtId").value.trim(), token: $("#rtTok").value.trim() });
-      toast(r.ok ? "انربط ✅" : r.code === "bad_routine_token" ? "هذا مو الرمز. الرمز يبدأ بـ sk-ant- (مو الرابط)" : r.code === "bad_routine_id" ? "رقم المهمة لازم يبدأ بـ trig_" : "تأكد من الرقم والرمز"); if (r.ok) { await load(); openEmp(d.link); }
+      toast(r.ok ? "انربط ✅" : ({ token_is_url: "هذا رابط، مو الرمز. الرمز يبدأ بـ sk-ant-", token_empty: "خانة الرمز فاضية", token_prefix: `الرمز لازم يبدأ بـ sk-ant- (اللي لصقته يبدأ بـ «${r.start}»)`, token_short: `الرمز ناقص (${r.len} حرف بس). انسخه كامل`, bad_routine_id: "رقم المهمة غلط" })[r.code] || "ما انحفظ، جرّب مرة ثانية"); if (r.ok) { await load(); openEmp(d.link); }
     } else if (d.unlink) {
       await api("/api/routine", { emp: d.unlink, clear: true }); toast("انفصل"); await load(); openEmp(d.unlink);
     } else if (el.id === "saveCfg") {

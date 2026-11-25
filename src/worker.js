@@ -238,10 +238,15 @@ async function ownerApi(request, env, path, url) {
   }
   if (path === "/api/routine") { // ربط جلسة موظف: الرمز ينحفظ وما يرجع للمتصفح أبداً
     if (!teamKeys.has(body.emp)) return json(400, { ok: false, code: "bad_emp" });
-    const id = clip(body.id, 100).trim(), token = clip(body.token, 500).trim();
+    // تنظيف: مسافات، أسطر، حروف مخفية، علامات تنصيص (تنلصق من الجوال)
+    const clean = (v) => String(v ?? "").replace(/[\s\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff"'`«»]/g, "");
+    const id = clean(clip(body.id, 200)) || TEAM.find((t) => t.key === body.emp).routine, token = clean(clip(body.token, 1000));
     if (body.clear) { await env.DB.prepare("DELETE FROM settings WHERE k = ?").bind("routine:" + body.emp).run(); await log(env, body.emp, "routine_unlinked", { by: "المالك" }); return json(200, { ok: true }); }
     if (!/^trig_[A-Za-z0-9]{10,60}$/.test(id)) return json(400, { ok: false, code: "bad_routine_id" });
-    if (!/^sk-ant-[A-Za-z0-9_-]{20,}$/.test(token)) return json(400, { ok: false, code: "bad_routine_token" }); // الرمز يبدأ بـ sk-ant- (مو رابط)
+    if (/^https?:/i.test(token)) return json(400, { ok: false, code: "token_is_url" });
+    if (!token) return json(400, { ok: false, code: "token_empty" });
+    if (!token.startsWith("sk-ant-")) return json(400, { ok: false, code: "token_prefix", start: token.slice(0, 3) });
+    if (token.length < 40) return json(400, { ok: false, code: "token_short", len: token.length });
     await setSetting(env, "routine:" + body.emp, { id, token });
     await log(env, body.emp, "routine_linked", { by: "المالك" });
     return json(200, { ok: true });

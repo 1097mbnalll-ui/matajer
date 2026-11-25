@@ -260,12 +260,12 @@ test("ربط الجلسة من الموقع: الرمز ينحفظ وما يرج
   const c = await login(env);
   assert.equal((await call(env, "/api/task", { cookie: c, body: { emp: "assistant", text: "x" } })).body.wakeCode, "not_configured");
   assert.equal((await call(env, "/api/routine", { cookie: c, body: { emp: "assistant", id: "trig_assistant0001", token: "https://api.anthropic.com/x" } })).status, 400);
-  assert.equal((await call(env, "/api/routine", { cookie: c, body: { emp: "assistant", id: "trig_assistant0001", token: "sk-ant-oat01-routine-long-token" } })).status, 200);
+  assert.equal((await call(env, "/api/routine", { cookie: c, body: { emp: "assistant", id: "trig_assistant0001", token: "sk-ant-oat01-routine-long-token-0123456789abcdef" } })).status, 200);
   const st = await call(env, "/api/state", { cookie: c });
   assert.equal(st.body.team.find((t) => t.key === "assistant").linked, true);
-  assert.ok(!JSON.stringify(st.body).includes("sk-ant-oat01-routine-long-token"), "الرمز ما يرجع للمتصفح");
+  assert.ok(!JSON.stringify(st.body).includes("sk-ant-oat01-routine-long-token-0123456789abcdef"), "الرمز ما يرجع للمتصفح");
   assert.equal((await call(env, "/api/task", { cookie: c, body: { emp: "assistant", text: "رتب ملفاتي" } })).body.woke, true);
-  assert.equal(env.fired.at(-1).headers.Authorization, "Bearer sk-ant-oat01-routine-long-token");
+  assert.equal(env.fired.at(-1).headers.Authorization, "Bearer sk-ant-oat01-routine-long-token-0123456789abcdef");
 });
 
 test("اربط تيليقرام: ياخذ محادثة المالك ويركّب الـ webhook بسر", async () => {
@@ -359,7 +359,7 @@ test("ملف مرفق بالمهمة: الموظف نفسه بس ينزّله", 
 });
 
 test("«حلّلها»: يوضح ليش ما صحى، وتنبيهات نون تروح لمسؤول نون", async () => {
-  const env = makeEnv(); delete env.ROUTINE_MONITOR_ID; env.ROUTINE_NOON_ID = "trig_n"; env.ROUTINE_NOON_TOKEN = "tok_n";
+  const env = makeEnv(); delete env.ROUTINE_MONITOR_ID; delete env.ROUTINE_MONITOR_TOKEN; env.ROUTINE_NOON_ID = "trig_n"; env.ROUTINE_NOON_TOKEN = "tok_n";
   const c = await login(env);
   const t = Date.now();
   await env.DB.prepare("INSERT INTO alerts (k, level, title, body, first, last) VALUES ('out:x','important','منتج خلص','',?,?)").bind(t, t).run().catch(async () => { await call(env, "/api/state", { cookie: c }); });
@@ -371,4 +371,18 @@ test("«حلّلها»: يوضح ليش ما صحى، وتنبيهات نون ت
   assert.equal(mon.body.ok, false); assert.match(mon.body.why, /المراقب ما صحى: ما انربطت جلسته/);
   const nn = await call(env, "/api/analyze", { cookie: c, body: { id: ids.find((a) => a.k === "noon_low:A").id } });
   assert.equal(nn.body.ok, true); assert.equal(nn.body.who, "مسؤول نون");
+});
+
+test("ربط الجلسة: رقم المهمة يتعبى لحاله، والرمز ينظف من المسافات والحروف المخفية", async () => {
+  const env = makeEnv();
+  const c = await login(env);
+  const tok = "sk-ant-oat01-" + "a".repeat(90);
+  const r = await call(env, "/api/routine", { cookie: c, body: { emp: "monitor", id: "", token: " \u200f" + tok.slice(0, 50) + "\n" + tok.slice(50) + " " } });
+  assert.equal(r.status, 200);
+  delete env.ROUTINE_MONITOR_ID; delete env.ROUTINE_MONITOR_TOKEN;
+  await call(env, "/api/task", { cookie: c, body: { emp: "monitor", text: "x" } });
+  assert.equal(env.fired.at(-1).u, "https://api.anthropic.com/v1/claude_code/routines/trig_016JZXTgpVNvT6orvmDoYDU3/fire");
+  assert.equal(env.fired.at(-1).headers.Authorization, "Bearer " + tok);
+  assert.equal((await call(env, "/api/routine", { cookie: c, body: { emp: "monitor", token: "https://x" } })).body.code, "token_is_url");
+  assert.equal((await call(env, "/api/routine", { cookie: c, body: { emp: "monitor", token: "sk-ant-abc" } })).body.code, "token_short");
 });

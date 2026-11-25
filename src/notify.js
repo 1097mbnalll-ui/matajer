@@ -1,3 +1,4 @@
+import { TEAM } from "./team.js";
 // تيليقرام + تشغيل جلسات الموظفين (routines على اشتراك Max)
 import { bump, log, setSetting, getSetting } from "./db.js";
 
@@ -32,7 +33,8 @@ export const levelIcon = (l) => ICON[l] || ICON.info;
 export async function routineOf(env, emp) {
   const K = emp.toUpperCase();
   const saved = (await getSetting(env, "routine:" + emp)) || {};
-  return { id: env[`ROUTINE_${K}_ID`] || saved.id || null, token: env[`ROUTINE_${K}_TOKEN`] || saved.token || null };
+  const def = TEAM.find((t) => t.key === emp)?.routine || null;
+  return { id: env[`ROUTINE_${K}_ID`] || saved.id || def, token: env[`ROUTINE_${K}_TOKEN`] || saved.token || null };
 }
 export async function wake(env, emp, text) {
   const { id, token } = await routineOf(env, emp);
