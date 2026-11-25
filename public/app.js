@@ -23,9 +23,24 @@ function toast(t) { const el = $("#toast"); el.textContent = t; el.hidden = fals
 const when = (t) => new Date(t).toLocaleString("ar-SA-u-nu-arab", { weekday: "short", hour: "numeric", minute: "2-digit" });
 
 // ---------- الدخول ----------
-function showLogin() { $("#app").hidden = true; $("#login").hidden = false; $("#pw").focus(); }
+let SETUP = false;
+async function showLogin() {
+  $("#app").hidden = true; $("#login").hidden = false;
+  const st = await fetch("/api/setup-status").then((r) => r.json()).catch(() => ({}));
+  SETUP = !!st.needsSetup;
+  $("#loginForm h1 + p").textContent = SETUP ? "أول مرة: اختر كلمة سر للمكتب (١٠ أحرف أو أكثر) واحفظها عندك" : "خاص بالمالك";
+  $("#loginForm button").textContent = SETUP ? "احفظ كلمة السر وادخل" : "دخول";
+  $("#pw").autocomplete = SETUP ? "new-password" : "current-password";
+  $("#pw").focus();
+}
 $("#loginForm").addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (SETUP) {
+    const s = await fetch("/api/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: $("#pw").value }) });
+    const sj = await s.json().catch(() => ({}));
+    if (!s.ok) { $("#loginMsg").textContent = sj.code === "too_short" ? "كلمة السر لازم ١٠ أحرف أو أكثر." : "انحفظت كلمة سر من قبل. سجّل دخول."; if (sj.code === "already_set") showLogin(); return; }
+    SETUP = false;
+  }
   const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: $("#pw").value }) });
   const j = await r.json().catch(() => ({}));
   if (r.ok) { $("#pw").value = ""; $("#login").hidden = true; load(); return; }
@@ -142,11 +157,15 @@ function openSettings() {
     <label class="field"><span>أقصى عدد اجتماعات باليوم</span><input id="meetingCap" type="number" inputmode="numeric" value="${S.caps.meetings}"></label>
     <div class="btns"><button class="btn primary" id="saveRules">احفظ</button><button class="btn danger" id="logout">خروج</button></div>
     <h3>تيليقرام ${S.telegram.linked ? "✅ مربوط" : "⚪️ مو مربوط"}</h3>
-    ${S.telegram.bot ? `<p class="muted" style="font-size:13px">أرسل أي رسالة لبوت المكتب في تيليقرام، وبعدها اضغط الزر.</p><button class="btn" id="tgSetup">${S.telegram.linked ? "أعد الربط" : "اربط تيليقرام"}</button>` : `<p class="muted" style="font-size:13px">لازم يتحط رمز البوت في Cloudflare أول (TELEGRAM_BOT_TOKEN).</p>`}`);
+    <label class="field"><span>رمز البوت من BotFather ${S.telegram.bot ? "(محفوظ ✅، اتركه فاضي إذا ما تبي تغيّره)" : ""}</span><input id="cfgBot" type="password" dir="ltr" autocomplete="off"></label>
+    <p class="muted" style="font-size:13px;margin-top:0">بعد ما تحفظ الرمز: أرسل أي رسالة للبوت في تيليقرام، وبعدها اضغط «اربط تيليقرام».</p>
+    <h3>حساب «قارئ المكتب» في المتجر ${S.reader ? "✅" : "⚪️"}</h3>
+    <label class="field"><span>الرقم السري (١٢ رقم) ${S.reader ? "(محفوظ ✅)" : ""}</span><input id="cfgPin" type="password" inputmode="numeric" dir="ltr" autocomplete="off"></label>
+    <div class="btns"><button class="btn primary" id="saveCfg">احفظ</button>${S.telegram.bot ? `<button class="btn" id="tgSetup">${S.telegram.linked ? "أعد ربط تيليقرام" : "اربط تيليقرام"}</button>` : ""}</div>`);
 }
 
 document.addEventListener("click", async (e) => {
-  const el = e.target.closest("[data-close],[data-emp],[data-meet],[data-perm],[data-send],[data-yes],[data-no],[data-meeting],[data-analyze],[data-link],[data-unlink],#tgSetup,#btnPending,#btnMeet,#btnSet,#saveRules,#logout");
+  const el = e.target.closest("[data-close],[data-emp],[data-meet],[data-perm],[data-send],[data-yes],[data-no],[data-meeting],[data-analyze],[data-link],[data-unlink],#tgSetup,#saveCfg,#btnPending,#btnMeet,#btnSet,#saveRules,#logout");
   if (!el) return;
   const d = el.dataset;
   try {
@@ -178,6 +197,9 @@ document.addEventListener("click", async (e) => {
       toast(r.ok ? "انربط ✅" : "تأكد من الرقم والرمز"); if (r.ok) { await load(); openEmp(d.link); }
     } else if (d.unlink) {
       await api("/api/routine", { emp: d.unlink, clear: true }); toast("انفصل"); await load(); openEmp(d.unlink);
+    } else if (el.id === "saveCfg") {
+      const r = await api("/api/config", { TELEGRAM_BOT_TOKEN: $("#cfgBot").value.trim() || null, STORE_READER_PIN: $("#cfgPin").value.trim() || null });
+      toast(r.ok ? "انحفظ ✅" : "ما انحفظ"); await load(); openSettings();
     } else if (el.id === "tgSetup") {
       const r = await api("/api/tg-setup", {});
       toast(r.ok ? "انربط تيليقرام ✅ شيك على البوت" : r.code === "send_message_first" ? "أرسل رسالة للبوت أول وبعدها اضغط" : "ما انربط، جرّب مرة ثانية"); if (r.ok) { await load(); openSettings(); }

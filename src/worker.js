@@ -4,7 +4,7 @@
 // - /tg      تيليقرام (أزرار موافق/رفض ورسايل المالك)
 // - scheduled: المراقب كل ٥ دقايق
 import { TEAM, AREAS, LEVELS, teamKeys, areaOf } from "./team.js";
-import { ensureSchema, now, log, getSetting, setSetting, permsOf, bump, teamState } from "./db.js";
+import { ensureSchema, now, log, getSetting, setSetting, permsOf, bump, teamState, hydrate, CFG_KEYS } from "./db.js";
 import { tg, wake, ownerChat, tgHookSecret, routineOf } from "./notify.js";
 import { runMonitor, analysisPrompt, DEFAULT_RULES, storeCall } from "./monitor.js";
 
@@ -15,6 +15,16 @@ const sha = async (s) => hex(await crypto.subtle.digest("SHA-256", enc.encode(s)
 async function hmac(key, s) {
   const k = await crypto.subtle.importKey("raw", enc.encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   return hex(await crypto.subtle.sign("HMAC", k, enc.encode(s)));
+}
+async function pbkdf2(pw, salt) {
+  const k = await crypto.subtle.importKey("raw", enc.encode(pw), "PBKDF2", false, ["deriveBits"]);
+  return hex(await crypto.subtle.deriveBits({ name: "PBKDF2", salt: enc.encode(salt), iterations: 100000, hash: "SHA-256" }, k, 256));
+}
+async function hasPassword(env) { return !!(env.OFFICE_PASSWORD || (await getSetting(env, "pw"))); }
+async function checkPassword(env, pw) {
+  if (env.OFFICE_PASSWORD) return sameText(await hmac("ohod-office-login", pw), await hmac("ohod-office-login", env.OFFICE_PASSWORD));
+  const s = await getSetting(env, "pw");
+  return !!s && sameText(await pbkdf2(pw, s.salt), s.hash);
 }
 function sameText(a, b) {
   if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
@@ -29,6 +39,7 @@ export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil((async () => {
       await ensureSchema(env);
+      env = await hydrate(env);
       const m = new Date(event.scheduledTime || Date.now()).getUTCMinutes();
       await runMonitor(env, { hourly: m < 5 });
       // تقرير الصباح: الساعة ٧ بتوقيت الرياض، مرة وحدة باليوم
@@ -48,6 +59,8 @@ async function route(request, env, ctx) {
   if (path.startsWith("/api/") || path.startsWith("/agent/") || path === "/tg") {
     if (!env.DB) return json(500, { ok: false, code: "config", missing: "DB" });
     await ensureSchema(env);
+    env = await hydrate(env);
+    if (!env.OFFICE_URL) env.OFFICE_URL = url.origin;
   }
   if (path === "/tg") return telegram(request, env);
   if (path.startsWith("/agent/")) return agentApi(request, env, path, url);
@@ -86,11 +99,21 @@ async function ownerApi(request, env, path, url) {
   if (body === null) return json(400, { ok: false, code: "bad_body" });
   const ip = request.headers.get("CF-Connecting-IP") || "local";
 
+  if (path === "/api/setup-status") return json(200, { ok: true, needsSetup: !(await hasPassword(env)) });
+  if (path === "/api/setup") { // أول مرة بس: المالك يختار كلمة سر المكتب
+    if (await hasPassword(env)) return json(409, { ok: false, code: "already_set" });
+    const pw = clip(body.password, 200);
+    if (pw.length < 10) return json(400, { ok: false, code: "too_short" });
+    const salt = hex(crypto.getRandomValues(new Uint8Array(16)));
+    await setSetting(env, "pw", { salt, hash: await pbkdf2(pw, salt) });
+    await log(env, "manager", "password_set", { by: "المالك" });
+    return json(200, { ok: true });
+  }
   if (path === "/api/login") {
-    if (!env.OFFICE_PASSWORD) return json(500, { ok: false, code: "config" });
+    if (!(await hasPassword(env))) return json(409, { ok: false, code: "needs_setup" });
     const f = await env.DB.prepare("SELECT n, until FROM fails WHERE ip = ?").bind(ip).first();
     if (f && f.until > now()) return json(429, { ok: false, code: "locked", minutes: Math.ceil((f.until - now()) / 60000) });
-    const ok = sameText(await hmac("ohod-office-login", clip(body.password, 200)), await hmac("ohod-office-login", env.OFFICE_PASSWORD));
+    const ok = await checkPassword(env, clip(body.password, 200));
     if (!ok) {
       const n = (f && f.until <= now() && f.n >= MAX_FAILS ? 0 : f?.n || 0) + 1;
       const until = n >= MAX_FAILS ? now() + LOCK_MIN * 60000 : 0;
@@ -117,7 +140,7 @@ async function ownerApi(request, env, path, url) {
     const meetings = (await env.DB.prepare("SELECT * FROM meetings ORDER BY id DESC LIMIT 10").all()).results || [];
     const team = await teamState(env);
     for (const t of team) { const r = await routineOf(env, t.key); t.linked = !!(r.id && r.token); }
-    return json(200, { ok: true, team, telegram: { bot: !!env.TELEGRAM_BOT_TOKEN, linked: !!(await ownerChat(env)) }, areas: AREAS, levels: LEVELS, pending, alerts, meetings,
+    return json(200, { ok: true, team, telegram: { bot: !!env.TELEGRAM_BOT_TOKEN, linked: !!(await ownerChat(env)) }, reader: !!env.STORE_READER_PIN, areas: AREAS, levels: LEVELS, pending, alerts, meetings,
       rules: { ...DEFAULT_RULES, ...(await getSetting(env, "rules", {})) }, caps: { fire: await getSetting(env, "fire_cap", 60), meetings: await getSetting(env, "meeting_cap", 5) } });
   }
   if (path === "/api/log") {
@@ -156,6 +179,16 @@ async function ownerApi(request, env, path, url) {
     if (body.meetingCap != null) await setSetting(env, "meeting_cap", Math.max(0, Math.min(50, Number(body.meetingCap) || 0)));
     await log(env, "manager", "rules_changed", { by: "المالك" });
     return json(200, { ok: true, rules: r });
+  }
+  if (path === "/api/config") { // أسرار يحطها المالك من الموقع: تنحفظ وما ترجع للمتصفح
+    for (const k of CFG_KEYS) {
+      const v = body[k] == null ? null : clip(body[k], 300).trim();
+      if (v) await setSetting(env, "cfg:" + k, v);
+    }
+    if (body.TELEGRAM_BOT_TOKEN) await env.DB.prepare("DELETE FROM settings WHERE k = 'tg_chat'").run();
+    await env.DB.prepare("DELETE FROM settings WHERE k = 'store_session'").run();
+    await log(env, "manager", "config_changed", { keys: CFG_KEYS.filter((k) => body[k]), by: "المالك" });
+    return json(200, { ok: true });
   }
   if (path === "/api/routine") { // ربط جلسة موظف: الرمز ينحفظ وما يرجع للمتصفح أبداً
     if (!teamKeys.has(body.emp)) return json(400, { ok: false, code: "bad_emp" });
@@ -209,10 +242,16 @@ async function decide(env, id, yes, how) {
 // ================= جلسات الموظفين =================
 async function agentApi(request, env, path, url) {
   const auth = request.headers.get("Authorization") || "";
-  if (!env.AGENT_TOKEN || !sameText(auth, `Bearer ${env.AGENT_TOKEN}`)) return json(401, { ok: false, code: "agent_auth" });
   const body = await readBody(request);
   if (body === null) return json(400, { ok: false, code: "bad_body" });
   const emp = body.emp || url.searchParams.get("emp");
+  // رمز ثابت (اختياري) أو رمز الجلسة المؤقت اللي يجي مع كل تشغيل (مربوط بموظف واحد)
+  let allowed = !!env.AGENT_TOKEN && sameText(auth, `Bearer ${env.AGENT_TOKEN}`);
+  if (!allowed && /^Bearer [a-f0-9]{48}$/.test(auth)) {
+    const t = await env.DB.prepare("SELECT emp, expires FROM agent_tokens WHERE hash = ?").bind(await sha(auth.slice(7))).first();
+    if (t && t.expires > now()) { if (t.emp !== emp) return json(403, { ok: false, code: "token_for_other_employee", you: t.emp }); allowed = true; }
+  }
+  if (!allowed) return json(401, { ok: false, code: "agent_auth" });
   if (!teamKeys.has(emp)) return json(400, { ok: false, code: "bad_emp", team: [...teamKeys] });
 
   if (path === "/agent/brief") { // أول شي يسويه الموظف: وش عندي؟

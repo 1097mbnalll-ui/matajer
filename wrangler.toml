@@ -18,6 +18,7 @@ database_id = "REPLACE_AFTER_CREATING_D1"
 crons = ["*/5 * * * *"]
 
 [vars]
+OFFICE_URL = "https://ohod-office.1097mbnalll.workers.dev"
 STORE_API = "https://ohod-admin.1097mbnalll.workers.dev"
 STORE_ORIGIN = "https://1097mbnalll-ui.github.io"
 STORE_DATA_URL = "https://1097mbnalll-ui.github.io/Super/data.json"

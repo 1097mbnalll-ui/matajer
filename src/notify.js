@@ -38,15 +38,20 @@ export async function wake(env, emp, text) {
   const { id, token } = await routineOf(env, emp);
   if (!id || !token) { await log(env, emp, "wake_skipped", { why: "not_configured" }); return { ok: false, code: "not_configured" }; }
   const cap = Number(await getSetting(env, "fire_cap", 60));
+  // رمز مؤقت للجلسة (٣ ساعات، لهالموظف بس): الموظف ما يحتاج سر ثابت في بيئته
+  const tok = [...crypto.getRandomValues(new Uint8Array(24))].map((b) => b.toString(16).padStart(2, "0")).join("");
   if (!(await bump(env, "fire", cap))) { await log(env, emp, "wake_skipped", { why: "daily_cap", cap }); return { ok: false, code: "daily_cap" }; }
   try {
     const r = await (env.fetch || fetch)(`https://api.anthropic.com/v1/claude_code/routines/${encodeURIComponent(id)}/fire`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "anthropic-beta": "experimental-cc-routine-2026-04-01", "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
-      body: JSON.stringify({ text: String(text).slice(0, 8000) }),
+      body: JSON.stringify({ text: `${String(text).slice(0, 7000)}\n\n---\nرابط المكتب: ${env.OFFICE_URL || ""}\nرمز جلستك (مؤقت ٣ ساعات، لا تطبعه في أي مكان): ${tok}\nأرسله في كل طلب للمكتب: Authorization: Bearer <الرمز>` }),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { await log(env, emp, "wake_failed", { status: r.status }); return { ok: false, code: "fire_failed", status: r.status }; }
+    const h = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(tok)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    await env.DB.prepare("INSERT INTO agent_tokens (hash, emp, expires) VALUES (?, ?, ?)").bind(h, emp, Date.now() + 3 * 3600e3).run();
+    await env.DB.prepare("DELETE FROM agent_tokens WHERE expires < ?").bind(Date.now()).run();
     const url = j.claude_code_session_url || null;
     await env.DB.prepare("INSERT INTO emp_state (emp, status, session_url, at) VALUES (?, 'working', ?, ?) ON CONFLICT(emp) DO UPDATE SET status = 'working', session_url = excluded.session_url, at = excluded.at")
       .bind(emp, url, Date.now()).run();

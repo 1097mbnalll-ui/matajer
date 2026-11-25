@@ -284,3 +284,41 @@ test("اربط تيليقرام: ياخذ محادثة المالك ويركّب
   assert.equal(env.hookBody.secret_token, await tgHookSecret(env));
   assert.equal(env.sent.at(-1).chat_id, "777");
 });
+
+test("أول مرة: المالك يختار كلمة السر مرة وحدة، وبعدها ما أحد يقدر يغيّرها", async () => {
+  const env = makeEnv(); delete env.OFFICE_PASSWORD;
+  assert.equal((await call(env, "/api/setup-status")).body.needsSetup, true);
+  assert.equal((await call(env, "/api/login", { body: { password: "x" } })).body.code, "needs_setup");
+  assert.equal((await call(env, "/api/setup", { body: { password: "قصيرة" } })).status, 400);
+  assert.equal((await call(env, "/api/setup", { body: { password: "كلمة-سر-طويلة-للمكتب" } })).status, 200);
+  assert.equal((await call(env, "/api/setup", { body: { password: "واحد-ثاني-يحاول-يغيرها" } })).status, 409);
+  assert.equal((await call(env, "/api/login", { body: { password: "واحد-ثاني-يحاول-يغيرها" } })).status, 401);
+  assert.equal((await call(env, "/api/login", { body: { password: "كلمة-سر-طويلة-للمكتب" } })).status, 200);
+});
+
+test("المالك يحط رمز البوت ورقم القارئ من الموقع، وما يرجعون للمتصفح", async () => {
+  const env = makeEnv({ drivers: [{ id: "d1", name: "سالم", balance: 900 }] }); delete env.TELEGRAM_BOT_TOKEN; delete env.STORE_READER_PIN;
+  const c = await login(env);
+  let st = await call(env, "/api/state", { cookie: c });
+  assert.equal(st.body.telegram.bot, false); assert.equal(st.body.reader, false);
+  await call(env, "/api/config", { cookie: c, body: { TELEGRAM_BOT_TOKEN: "123:bot-secret-xyz", STORE_READER_PIN: "918273645501" } });
+  st = await call(env, "/api/state", { cookie: c });
+  assert.equal(st.body.telegram.bot, true); assert.equal(st.body.reader, true);
+  assert.ok(!JSON.stringify(st.body).includes("bot-secret-xyz") && !JSON.stringify(st.body).includes("918273645501"));
+  // المؤقت يقرأ الإعدادات المحفوظة
+  const p = []; await worker.scheduled({ scheduledTime: Date.parse("2026-11-26T10:00:00Z") }, env, { waitUntil: (x) => p.push(x) }); await Promise.all(p);
+  assert.ok(env.storeCalls.some((x) => x.p === "/enter" && x.body.pin === "918273645501"));
+});
+
+test("رمز الجلسة المؤقت: يجي مع التشغيل، يشتغل لنفس الموظف بس", async () => {
+  const env = makeEnv(); delete env.AGENT_TOKEN;
+  const c = await login(env);
+  await call(env, "/api/task", { cookie: c, body: { emp: "ideas", text: "فكرة" } });
+  const text = env.fired.at(-1).body.text;
+  assert.match(text, /رابط المكتب: https:\/\/office.test/);
+  const tok = text.match(/[a-f0-9]{48}/)[0];
+  const as = (emp, t = tok) => call(env, "/agent/brief", { body: { emp }, agent: t });
+  assert.equal((await as("ideas")).status, 200);
+  assert.equal((await as("manager")).body.code, "token_for_other_employee");
+  assert.equal((await as("ideas", "f".repeat(48))).status, 401);
+});

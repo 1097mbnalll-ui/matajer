@@ -14,6 +14,7 @@ const SCHEMA = [
   "CREATE TABLE IF NOT EXISTS meetings (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, by TEXT NOT NULL, topic TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', decision TEXT, agreed TEXT, closed INTEGER)",
   "CREATE TABLE IF NOT EXISTS meeting_lines (id INTEGER PRIMARY KEY AUTOINCREMENT, meeting INTEGER NOT NULL, at INTEGER NOT NULL, emp TEXT NOT NULL, text TEXT NOT NULL)",
   "CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, emp TEXT NOT NULL, text TEXT NOT NULL, src TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', result TEXT, done INTEGER)",
+  "CREATE TABLE IF NOT EXISTS agent_tokens (hash TEXT PRIMARY KEY, emp TEXT NOT NULL, expires INTEGER NOT NULL)",
   "CREATE TABLE IF NOT EXISTS counters (day TEXT NOT NULL, k TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, k))",
 ];
 
@@ -66,5 +67,13 @@ export async function teamState(env) {
     out.push({ ...t, status: st[t.key]?.status || "idle", sessionUrl: st[t.key]?.session_url || null, note: st[t.key]?.note || null,
       last: last || null, openTasks: open ? open.n : 0, perms: await permsOf(env, t.key) });
   }
+  return out;
+}
+
+// إعدادات سرية يحطها المالك من داخل الموقع (بدل إعدادات Cloudflare). المتغيرات في Cloudflare لها الأولوية
+export const CFG_KEYS = ["TELEGRAM_BOT_TOKEN", "STORE_READER_PIN"];
+export async function hydrate(env) {
+  const out = { ...env };
+  for (const k of CFG_KEYS) if (!out[k]) { const v = await getSetting(env, "cfg:" + k); if (v) out[k] = v; }
   return out;
 }

@@ -3,7 +3,7 @@ import http from "node:http";
 import { readFile } from "node:fs/promises";
 import { fakeD1 } from "./d1.mjs";
 import worker from "../src/worker.js";
-const env = { DB: fakeD1(), OFFICE_PASSWORD: "test-password", AGENT_TOKEN: "dev-agent",
+const env = { DB: fakeD1(), AGENT_TOKEN: "dev-agent",
   ASSETS: { fetch: async (req) => { const p = new URL(req.url).pathname; const f = p === "/" ? "index.html" : p.slice(1);
     try { const b = await readFile(new URL("../public/" + f, import.meta.url)); return new Response(b, { headers: { "Content-Type": f.endsWith(".css") ? "text/css" : f.endsWith(".js") ? "text/javascript" : "text/html; charset=utf-8" } }); } catch { return new Response("nf", { status: 404 }); } } },
   fetch: async () => Response.json({ ok: true }) };

@@ -90,7 +90,11 @@ wrangler.toml     إعداد Cloudflare بدون أسرار
 `brief` `status` `log` `store` (قراءة المتجر: alerts/stock/today/cash) `report` (المحلل بس) `tell` (المدير والأفكار والمساعد بس) `task-done` `assign` (المدير) `meeting-open` `meeting-invite` (المدير) `meeting-say` `meeting-read` `meeting-close` (المدير) `request` `request-status` `alert-done`.
 
 ### الأسرار (Cloudflare Secrets، ما تنحط في الكود)
-أربعة بس: `OFFICE_PASSWORD` `AGENT_TOKEN` `TELEGRAM_BOT_TOKEN` `STORE_READER_PIN`. متغيرات عادية في `wrangler.toml`: `STORE_API` `STORE_ORIGIN` `STORE_DATA_URL`.
+**ولا سر إلزامي في Cloudflare** (المالك ما قدر يحط أسرار في الإعدادات، ٢٥ نوفمبر ٢٠٢٦):
+- كلمة سر المكتب: المالك يختارها أول ما يفتح الموقع (`/api/setup`، مرة وحدة، PBKDF2 في D1).
+- رمز البوت ورقم القارئ: من إعدادات الموقع (`/api/config`، ينحفظون في D1 وما يرجعون للمتصفح).
+- الموظفين: رمز جلسة مؤقت (٣ ساعات، مربوط بموظف واحد، `agent_tokens`) يجي في نص التشغيل مع «رابط المكتب».
+- اختياري (له الأولوية لو انحط): `OFFICE_PASSWORD` `AGENT_TOKEN` `TELEGRAM_BOT_TOKEN` `STORE_READER_PIN`. متغيرات عادية في `wrangler.toml`: `STORE_API` `STORE_ORIGIN` `STORE_DATA_URL`.
 - محادثة تيليقرام: زر «اربط تيليقرام» في الإعدادات (`/api/tg-setup`) يحفظ رقم المحادثة ويركّب الـ webhook. سر الـ webhook مشتق من رمز البوت (`tgHookSecret`).
 - ربط جلسة كل موظف: من الموقع («ربط الجلسة»، `/api/routine`): رقم المهمة والرمز ينحفظون في D1 الخاصة وما يرجع الرمز للمتصفح. (أو `ROUTINE_<KEY>_ID/_TOKEN` في Cloudflare، ولها الأولوية.)
 - دليل المالك خطوة بخطوة: `SETUP.md`.
