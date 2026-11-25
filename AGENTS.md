@@ -113,6 +113,18 @@ wrangler.toml     إعداد Cloudflare بدون أسرار
 4. لكل موظف مهمة مجدولة في claude.ai/code/routines على مستودع `matajer`، وبرومبت: «اقرأ agents/common.md وagents/<دور>.md ونفّذ»، و API trigger (الرمز يروح كسر للخادم).
 5. رمز `AGENT_TOKEN` يتحط في بيئة جلسات الموظفين كـ network secret لرابط المكتب (ما يمر بالشات).
 
+### المهام المجدولة للموظفين (انعملت ٢٥ نوفمبر ٢٠٢٦، بدون جدولة، جلسة جديدة لكل تشغيل، بيئة «متاجر أحد»)
+| الموظف | رقم المهمة |
+|---|---|
+| المدير العام | `trig_01UttuofJBHvgBAnNyHDmDsG` |
+| المراقب | `trig_016JZXTgpVNvT6orvmDoYDU3` |
+| محلل الصباح | `trig_014xmJdpw4yNRnuSRkGw6tGi` |
+| مسؤول الأسعار والعروض | `trig_01YP6S8Bk8814U1AeEBs2H2D` |
+| مسؤول نون | `trig_01HJSLHHVSuzx8tsT5ab3cbV` |
+| مطوّر الأفكار | `trig_01GvcdssFvC9ac98oBRDMwGC` |
+| المساعد الشخصي | `trig_017UY3QS86MHf5un7s9C4ykv` |
+باقي على المالك لكل واحد: claude.ai/code/routines ← المهمة ← API trigger ← Generate token ← يلصق الرقم والرمز في المكتب («ربط الجلسة»). الرمز ما ينعمل إلا من الواجهة.
+
 ### حدود وتكلفة الجلسات
 - كل تشغيل = جلسة من اشتراك Max. اجتماع كامل ≈ ٧ جلسات أو أكثر. السقف اليومي الافتراضي ٦٠ تشغيل و٥ اجتماعات (يتغير من الإعدادات).
 
