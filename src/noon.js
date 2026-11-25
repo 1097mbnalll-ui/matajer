@@ -1,7 +1,7 @@
 // الاتصال بنون (noon Partner API) — حسب التوثيق الرسمي noon-docs.noonpartners.dev
 // المفتاح: ملف .json من نون (key_id, private_key, project_code) يرفعه المالك من إعدادات المكتب.
 // الدخول: JWT بتوقيع RS256 ← POST /identity/public/v1/api/login ← كوكي جلسة (تعيش ٣٠ يوم)
-import { getSetting, setSetting, log, now } from "./db.js";
+import { addMsg, getSetting, setSetting, log, now } from "./db.js";
 import { tg, wake, levelIcon } from "./notify.js";
 
 export const NOON_BASE = "https://noon-api-gateway.noon.partners";
@@ -125,6 +125,7 @@ export async function runNoon(env) {
   for (const a of fresh) {
     await tg(env, `${levelIcon(a.level)}\n${a.title}\n${a.body || ""}`, [[{ text: "🔎 حلّلها", callback_data: `n:${a.id}` }]]);
     await log(env, "noon", "alert", { level: a.level, title: a.title });
+    await addMsg(env, "noon", "emp", `${a.title}\n${a.body || ""}`, "alert", a.id);
     if (a.level === "urgent") await wake(env, "noon", `تنبيه نون (${a.level}): ${a.title}\n${a.body}\nرقم التنبيه: ${a.id}`);
   }
   return { checked: skus.length, fresh: fresh.length };

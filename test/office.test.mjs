@@ -368,7 +368,7 @@ test("«حلّلها»: يوضح ليش ما صحى، وتنبيهات نون ت
   await env.DB.prepare("INSERT INTO alerts (k, level, title, body, first, last) VALUES ('noon_low:A','important','نون: حليب قرّب يخلص','',?,?)").bind(t, t).run();
   const ids = (await env.DB.prepare("SELECT id, k FROM alerts").all()).results;
   const mon = await call(env, "/api/analyze", { cookie: c, body: { id: ids.find((a) => a.k === "out:y").id } });
-  assert.equal(mon.body.ok, false); assert.match(mon.body.why, /المراقب ما صحى: ما انربطت جلسته/);
+  assert.equal(mon.body.ok, false); assert.match(mon.body.why, /فهد \(المراقب\) ما صحى: ما انربطت جلسته/);
   const nn = await call(env, "/api/analyze", { cookie: c, body: { id: ids.find((a) => a.k === "noon_low:A").id } });
   assert.equal(nn.body.ok, true); assert.equal(nn.body.who, "مسؤول نون");
 });
@@ -395,4 +395,36 @@ test("الربط الداخلي بخادم المتجر (Service Binding) يتق
   const r = await A(env, "/agent/store", { emp: "manager", path: "/admin/cash" });
   assert.equal(r.body.data.drivers[0].name, "سالم");
   assert.deepEqual(viaBinding, ["/enter", "/admin/cash"]);
+});
+
+test("المحادثات: رسالة المالك، رد الموظف، بطاقة الموافقة، وغير المقروء", async () => {
+  const env = makeEnv(); env.ROUTINE_NOON_ID = "trig_n"; env.ROUTINE_NOON_TOKEN = "tok_n";
+  const c = await login(env);
+  const id = (await call(env, "/api/task", { cookie: c, body: { emp: "noon", text: "مبيعات اليوم" } })).body.id;
+  await A(env, "/agent/task-done", { emp: "noon", id, result: "طلب واحد" });
+  await A(env, "/agent/request", { emp: "noon", area: "prices", title: "خفض سعر الحليب", detail: "٧٫٥ ← ٦٫٩٥" });
+  let list = await call(env, "/api/chats", { cookie: c });
+  const noon = list.body.chats.find((x) => x.key === "noon");
+  assert.equal(noon.person, "راكان"); assert.equal(noon.unread, 2); assert.equal(noon.last.kind, "card");
+  assert.equal(list.body.pending, 1);
+  const chat = await call(env, "/api/chat?emp=noon", { cookie: c });
+  assert.deepEqual(chat.body.messages.map((m) => m.frm), ["owner", "emp", "emp"]);
+  const card = chat.body.messages.at(-1);
+  assert.equal(chat.body.cards[card.ref].status, "pending");
+  list = await call(env, "/api/chats", { cookie: c });
+  assert.equal(list.body.chats.find((x) => x.key === "noon").unread, 0);
+  // مهمة لموظف مو مربوط: رسالة توضح السبب داخل المحادثة
+  await call(env, "/api/task", { cookie: c, body: { emp: "assistant", text: "رتب" } });
+  const a = await call(env, "/api/chat?emp=assistant", { cookie: c });
+  assert.match(a.body.messages.at(-1).text, /ما صحى/);
+});
+
+test("المالك يعلّق في قروب الاجتماع ويصحى المدير", async () => {
+  const env = makeEnv();
+  const c = await login(env);
+  const id = (await A(env, "/agent/meeting-open", { emp: "manager", topic: "خطة" })).body.id;
+  await call(env, "/api/meeting-say", { cookie: c, body: { id, text: "لا ترفعون الأسعار" } });
+  const r = await A(env, "/agent/meeting-read", { emp: "monitor", id });
+  assert.equal(r.body.lines[0].emp, "owner");
+  assert.ok(env.fired.some((f) => f.u.includes("trig_man") && f.body.text.includes("لا ترفعون الأسعار")));
 });

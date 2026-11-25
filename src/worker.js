@@ -4,7 +4,7 @@
 // - /tg      تيليقرام (أزرار موافق/رفض ورسايل المالك)
 // - scheduled: المراقب كل ٥ دقايق
 import { TEAM, AREAS, LEVELS, teamKeys, areaOf } from "./team.js";
-import { ensureSchema, now, log, getSetting, setSetting, permsOf, bump, teamState, hydrate, CFG_KEYS } from "./db.js";
+import { ensureSchema, now, log, getSetting, setSetting, permsOf, bump, teamState, hydrate, CFG_KEYS, addMsg } from "./db.js";
 import { tg, wake, ownerChat, tgHookSecret, routineOf } from "./notify.js";
 import ASSETS from "./assets.js";
 import AGENT_TEXT from "./agents-text.js";
@@ -40,7 +40,7 @@ const clip = (s, n) => String(s ?? "").slice(0, n);
 const nameOf = (k) => TEAM.find((t) => t.key === k)?.name || k;
 // ليش ما صحى الموظف: بكلام واضح للمالك
 const WHY = { not_configured: "ما انربطت جلسته للحين (اضغط عليه في المكتب ← ربط الجلسة)", daily_cap: "وصلنا الحد اليومي للجلسات (تقدر ترفعه من الإعدادات)", fire_failed: "Claude رفض التشغيل (يمكن رمز التشغيل انحذف أو انتهى، اربطه من جديد)" };
-const whyNot = (emp, code) => `${nameOf(emp)} ما صحى: ${WHY[code] || code || "سبب غير معروف"}`;
+const whyNot = (emp, code) => `${TEAM.find((t) => t.key === emp)?.person || nameOf(emp)} (${nameOf(emp)}) ما صحى: ${WHY[code] || code || "سبب غير معروف"}`;
 // التنبيه يروح للمختص: تنبيهات نون لمسؤول نون، والباقي للمراقب
 const alertOwner = (a) => (String(a.k || "").startsWith("noon") ? "noon" : "monitor");
 const alertPrompt = (a) => alertOwner(a) === "noon" ? `تنبيه نون: ${a.title}\n${a.body || ""}\nرقم التنبيه: ${a.id}` : analysisPrompt(a);
@@ -159,6 +159,51 @@ async function ownerApi(request, env, path, url) {
     return json(200, { ok: true, team, replies, telegram: { bot: !!env.TELEGRAM_BOT_TOKEN, linked: !!(await ownerChat(env)) }, reader: !!env.STORE_READER_PIN, noon: { key: !!(await noonKey(env)), skus: ((await getSetting(env, "noon_skus")) || []).length }, areas: AREAS, levels: LEVELS, pending, alerts, meetings,
       rules: { ...DEFAULT_RULES, ...(await getSetting(env, "rules", {})) }, caps: { fire: await getSetting(env, "fire_cap", 60), meetings: await getSetting(env, "meeting_cap", 5) } });
   }
+  // ---------- المحادثات ----------
+  if (path === "/api/chats") {
+    if (!(await env.DB.prepare("SELECT id FROM messages LIMIT 1").first())) { // أول مرة: نسحب المهام القديمة للمحادثات
+      for (const t of (await env.DB.prepare("SELECT * FROM tasks ORDER BY id").all()).results || []) {
+        await env.DB.prepare("INSERT INTO messages (at, emp, frm, kind, text, ref) VALUES (?, ?, ?, 'text', ?, ?)").bind(t.at, t.emp, t.src === "المدير العام" ? "sys" : "owner", t.text.replace(/\n\[مرفق:[^\]]*\]/, ""), t.id).run();
+        if (t.result) await env.DB.prepare("INSERT INTO messages (at, emp, frm, kind, text, ref) VALUES (?, ?, 'emp', 'text', ?, ?)").bind(t.done || t.at, t.emp, t.result, t.id).run();
+      }
+    }
+    const st = Object.fromEntries(((await env.DB.prepare("SELECT emp, status, session_url FROM emp_state").all()).results || []).map((r) => [r.emp, r]));
+    const chats = [];
+    for (const t of TEAM) {
+      const last = await env.DB.prepare("SELECT at, frm, kind, text FROM messages WHERE emp = ? ORDER BY id DESC LIMIT 1").bind(t.key).first();
+      const seenId = (await env.DB.prepare("SELECT v FROM seen WHERE k = ?").bind("chat:" + t.key).first())?.v || 0;
+      const unread = (await env.DB.prepare("SELECT COUNT(*) n FROM messages WHERE emp = ? AND frm != 'owner' AND id > ?").bind(t.key, seenId).first()).n;
+      const r = await routineOf(env, t.key);
+      chats.push({ key: t.key, person: t.person, name: t.name, color: t.color, icon: t.icon, status: st[t.key]?.status || "idle", sessionUrl: st[t.key]?.session_url || null, linked: !!(r.id && r.token), last, unread });
+    }
+    const meetings = [];
+    for (const m of (await env.DB.prepare("SELECT * FROM meetings ORDER BY id DESC LIMIT 15").all()).results || []) {
+      const l = await env.DB.prepare("SELECT emp, text, at FROM meeting_lines WHERE meeting = ? ORDER BY id DESC LIMIT 1").bind(m.id).first();
+      meetings.push({ id: m.id, topic: m.topic, status: m.status, at: l?.at || m.at, last: l || null });
+    }
+    const pending = (await env.DB.prepare("SELECT COUNT(*) n FROM requests WHERE status = 'pending'").first()).n;
+    return json(200, { ok: true, chats, meetings, pending });
+  }
+  if (path === "/api/chat") {
+    const emp = url.searchParams.get("emp");
+    if (!teamKeys.has(emp)) return json(400, { ok: false, code: "bad_emp" });
+    const msgs = ((await env.DB.prepare("SELECT * FROM messages WHERE emp = ? ORDER BY id DESC LIMIT 150").bind(emp).all()).results || []).reverse();
+    const cardIds = msgs.filter((m) => m.kind === "card").map((m) => m.ref);
+    const cards = {};
+    if (cardIds.length) for (const q of (await env.DB.prepare("SELECT id, area, title, detail, status, big FROM requests WHERE id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(cardIds)).all()).results || []) cards[q.id] = q;
+    if (msgs.length) await env.DB.prepare("INSERT INTO seen (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").bind("chat:" + emp, msgs.at(-1).id).run();
+    const st = await env.DB.prepare("SELECT status, session_url FROM emp_state WHERE emp = ?").bind(emp).first();
+    return json(200, { ok: true, messages: msgs, cards, status: st?.status || "idle", sessionUrl: st?.session_url || null });
+  }
+  if (path === "/api/meeting-say") { // المالك يعلّق في قروب الاجتماع
+    const m = await env.DB.prepare("SELECT * FROM meetings WHERE id = ?").bind(Number(body.id)).first();
+    if (!m) return json(404, { ok: false });
+    const text = clip(body.text, 2000).trim();
+    if (!text) return json(400, { ok: false, code: "empty" });
+    await env.DB.prepare("INSERT INTO meeting_lines (meeting, at, emp, text) VALUES (?, ?, 'owner', ?)").bind(m.id, now(), text).run();
+    if (m.status === "open") await wake(env, "manager", `المالك علّق في الاجتماع رقم ${m.id} (${m.topic}):\n${text}\nخذ تعليقه بالاعتبار وكمّل الاجتماع.`);
+    return json(200, { ok: true });
+  }
   if (path === "/api/replies-seen") {
     await env.DB.prepare("INSERT INTO seen (k, v) VALUES ('replies', ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").bind(now()).run();
     return json(200, { ok: true });
@@ -194,7 +239,7 @@ async function ownerApi(request, env, path, url) {
     const note = f ? `\n[مرفق: ${clip(f.name, 120)} — نزّله بـ POST /agent/file {"emp","task":<رقم المهمة>}]` : "";
     const r = await giveTask(env, body.emp, text + note, "الموقع", f ? async (id) => {
       await env.DB.prepare("INSERT INTO files (task, name, type, size, b64, at) VALUES (?, ?, ?, ?, ?, ?)").bind(id, clip(f.name, 120), clip(f.type, 100), Math.floor(f.b64.length * 3 / 4), f.b64, now()).run();
-    } : null);
+    } : null, f ? `${text}\n📎 ${clip(f.name, 120)}` : text);
     return json(200, r);
   }
   if (path === "/api/rules") {
@@ -274,11 +319,15 @@ async function ownerApi(request, env, path, url) {
   return json(404, { ok: false, code: "not_found" });
 }
 
-async function giveTask(env, emp, text, src, before) {
+async function giveTask(env, emp, text, src, before, shown) {
   const r = await env.DB.prepare("INSERT INTO tasks (at, emp, text, src) VALUES (?, ?, ?, ?) RETURNING id").bind(now(), emp, text, src).first();
   if (before) await before(r.id);
+  // في المحادثة: رسالة المالك، أو «طلب من سلطان» لو من المدير
+  if (src === "المدير العام") await addMsg(env, emp, "sys", `سلطان طلب: ${String(shown ?? text).slice(0, 1500)}`, "text", r.id);
+  else await addMsg(env, emp, "owner", shown ?? text, "text", r.id);
   await log(env, emp, "task_received", { id: r.id, src });
   const w = await wake(env, emp, `مهمة جديدة من المالك (رقم ${r.id}):\n${text}`);
+  if (!w.ok) await addMsg(env, emp, "sys", whyNot(emp, w.code));
   return { ok: true, id: r.id, woke: w.ok, wakeCode: w.code || null, why: w.ok ? null : whyNot(emp, w.code), url: w.url || null };
 }
 
@@ -290,6 +339,7 @@ async function decide(env, id, yes, how) {
   const st = yes ? "approved" : "rejected";
   await env.DB.prepare("UPDATE requests SET status = ?, decided = ?, how = ? WHERE id = ? AND status = 'pending'").bind(st, now(), how, id).run();
   await log(env, r.emp, yes ? "approved_by_owner" : "rejected_by_owner", { id, title: r.title, how });
+  await addMsg(env, r.emp, "sys", `${yes ? "✓ وافقت على" : "✕ رفضت"}: ${r.title}`, "text", id);
   await wake(env, r.emp, `المالك ${yes ? "وافق على" : "رفض"} طلبك رقم ${id}: ${r.title}`);
   return [200, { ok: true, status: st }];
 }
@@ -333,6 +383,7 @@ async function agentApi(request, env, path, url) {
     if (!text) return json(400, { ok: false, code: "empty" });
     await tg(env, `💬 ${nameOf(emp)}:\n${text}`);
     await log(env, emp, "told_owner", { text: text.slice(0, 300) });
+    await addMsg(env, emp, "emp", text);
     return json(200, { ok: true });
   }
   if (path === "/agent/file") { // ملف مرفق بمهمة الموظف نفسه
@@ -347,6 +398,7 @@ async function agentApi(request, env, path, url) {
     if (!t) return json(404, { ok: false });
     await env.DB.prepare("UPDATE tasks SET status = 'done', result = ?, done = ? WHERE id = ?").bind(clip(body.result, 4000), now(), t.id).run();
     await log(env, emp, "task_done", { id: t.id });
+    await addMsg(env, emp, "emp", clip(body.result, 4000), "text", t.id);
     // المهمة من المالك نفسه: الرد يوصله مباشرة، أياً كان الموظف
     if (t.src !== "المدير العام" || TEAM.find((x) => x.key === emp)?.direct) await tg(env, `✅ ${nameOf(emp)} خلّص مهمتك رقم ${t.id}:\n${clip(body.result, 3000)}`);
     return json(200, { ok: true });
@@ -419,6 +471,7 @@ async function agentApi(request, env, path, url) {
     const r = await env.DB.prepare("INSERT INTO requests (at, emp, area, big, deploy, meeting, title, detail, status, decided, how) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id")
       .bind(now(), emp, area.key, big ? 1 : 0, deploy ? 1 : 0, meeting ? meeting.id : null, clip(body.title, 300), clip(body.detail, 4000), status, big ? null : now(), big ? null : "تلقائي (بسيط)").first();
     await log(env, emp, big ? "asked_approval" : "auto_approved", { id: r.id, title: clip(body.title, 200), area: area.name });
+    await addMsg(env, emp, "emp", clip(body.title, 300), "card", r.id);
     if (big) {
       await tg(env, `🟡 ينتظر موافقتك (${nameOf(emp)})\n${clip(body.title, 300)}\nالمجال: ${area.name}${testsFailed ? "\n⚠️ فيه اختبار فشل" : ""}${meeting ? `\nاجتماع رقم ${meeting.id}: اتفقوا كلهم` : ""}\n\n${clip(body.detail, 1500)}`,
         [[{ text: "✅ موافق", callback_data: `a:${r.id}:y` }, { text: "❌ رفض", callback_data: `a:${r.id}:n` }]]);
@@ -484,6 +537,7 @@ async function agentApi(request, env, path, url) {
     if (!text) return json(400, { ok: false, code: "empty" });
     await tg(env, `📊 تقرير الصباح\n${text}`);
     await log(env, emp, "morning_report", { len: text.length });
+    await addMsg(env, emp, "emp", text, "report");
     return json(200, { ok: true });
   }
   if (path === "/agent/alert-done") {

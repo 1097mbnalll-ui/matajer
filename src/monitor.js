@@ -1,6 +1,6 @@
 // المراقب: فحص المتجر كل ٥ دقايق على Cloudflare (بدون ذكاء اصطناعي)
 // يقرأ بس من خادم المتجر بحساب «قارئ المكتب» (دور reader في المتجر، يدخل برقمه من /enter)، وما يعدّل أي شي
-import { getSetting, setSetting, log, now, ensureSchema } from "./db.js";
+import { addMsg, getSetting, setSetting, log, now, ensureSchema } from "./db.js";
 import { tg, wake, levelIcon } from "./notify.js";
 
 export const DEFAULT_RULES = { cashLimit: 500, lowStockMin: 1, wakeOn: "urgent" };
@@ -126,6 +126,7 @@ export async function runMonitor(env, opts = {}) {
   for (const a of fresh) {
     await tg(env, `${levelIcon(a.level)}\n${a.title}\n${a.body || ""}`, [[{ text: "🔎 حلّلها", callback_data: `z:${a.id}` }]]);
     await log(env, "monitor", "alert", { level: a.level, title: a.title });
+    await addMsg(env, "monitor", "emp", `${a.title}\n${a.body || ""}`, "alert", a.id);
     const auto = a.level === "urgent" || (rules.wakeOn === "important" && a.level === "important");
     if (auto) await wake(env, "monitor", analysisPrompt(a));
   }

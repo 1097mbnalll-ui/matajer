@@ -16,6 +16,8 @@ const SCHEMA = [
   "CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, emp TEXT NOT NULL, text TEXT NOT NULL, src TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', result TEXT, done INTEGER)",
   "CREATE TABLE IF NOT EXISTS agent_tokens (hash TEXT PRIMARY KEY, emp TEXT NOT NULL, expires INTEGER NOT NULL)",
   "CREATE TABLE IF NOT EXISTS files (id INTEGER PRIMARY KEY AUTOINCREMENT, task INTEGER NOT NULL, name TEXT NOT NULL, type TEXT, size INTEGER NOT NULL, b64 TEXT NOT NULL, at INTEGER NOT NULL)",
+  "CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, emp TEXT NOT NULL, frm TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'text', text TEXT, ref INTEGER)",
+  "CREATE INDEX IF NOT EXISTS messages_emp ON messages (emp, id)",
   "CREATE TABLE IF NOT EXISTS seen (k TEXT PRIMARY KEY, v INTEGER NOT NULL)",
   "CREATE TABLE IF NOT EXISTS counters (day TEXT NOT NULL, k TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, k))",
 ];
@@ -78,4 +80,9 @@ export async function hydrate(env) {
   const out = { ...env };
   for (const k of CFG_KEYS) if (!out[k]) { const v = await getSetting(env, "cfg:" + k); if (v) out[k] = v; }
   return out;
+}
+
+// محادثة الموظف: frm = owner (المالك) / emp (الموظف) / sys (المكتب)؛ kind = text / card (طلب موافقة) / alert / report
+export async function addMsg(env, emp, frm, text, kind = "text", ref = null) {
+  await env.DB.prepare("INSERT INTO messages (at, emp, frm, kind, text, ref) VALUES (?, ?, ?, ?, ?, ?)").bind(Date.now(), emp, frm, kind, text == null ? null : String(text).slice(0, 6000), ref).run();
 }
