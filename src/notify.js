@@ -21,7 +21,7 @@ export async function wake(env, emp, text) {
   const K = emp.toUpperCase();
   const id = env[`ROUTINE_${K}_ID`], token = env[`ROUTINE_${K}_TOKEN`];
   if (!id || !token) { await log(env, emp, "wake_skipped", { why: "not_configured" }); return { ok: false, code: "not_configured" }; }
-  const cap = Number(await getSetting(env, "fire_cap", 20));
+  const cap = Number(await getSetting(env, "fire_cap", 60));
   if (!(await bump(env, "fire", cap))) { await log(env, emp, "wake_skipped", { why: "daily_cap", cap }); return { ok: false, code: "daily_cap" }; }
   try {
     const r = await (env.fetch || fetch)(`https://api.anthropic.com/v1/claude_code/routines/${encodeURIComponent(id)}/fire`, {

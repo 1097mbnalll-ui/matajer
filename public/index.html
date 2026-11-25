@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#f4efe6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#16181d" media="(prefers-color-scheme: dark)">
+<title>مكتب متاجر أحد</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="login" class="login" hidden>
+  <form id="loginForm" class="card">
+    <div class="logo">🏢</div>
+    <h1>مكتب متاجر أحد</h1>
+    <p class="muted">خاص بالمالك</p>
+    <input id="pw" type="password" autocomplete="current-password" placeholder="كلمة السر" required>
+    <button class="btn primary" type="submit">دخول</button>
+    <p id="loginMsg" class="err" role="alert"></p>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <header class="top">
+    <div class="brand"><b>مكتب متاجر أحد</b><span id="clock" class="muted"></span></div>
+    <div class="actions">
+      <button id="btnPending" class="chip warn">ينتظر موافقتك <b id="nPending">0</b></button>
+      <button id="btnMeet" class="chip">اجتماعات</button>
+      <button id="btnSet" class="chip icon" aria-label="الإعدادات">⚙︎</button>
+    </div>
+  </header>
+
+  <section class="alerts" id="alerts"></section>
+
+  <main class="office">
+    <svg id="floor" viewBox="22 6 356 214" role="img" aria-label="مخطط المكتب"></svg>
+    <p class="hint muted">اضغط على أي موظف عشان تكلمه أو تتحكم بصلاحياته</p>
+  </main>
+
+  <section class="list" id="teamList"></section>
+</div>
+
+<div id="sheet" class="sheet" hidden>
+  <div class="sheet-bg" data-close></div>
+  <div class="sheet-body" role="dialog" aria-modal="true">
+    <button class="x" data-close aria-label="إغلاق">✕</button>
+    <div id="sheetContent"></div>
+  </div>
+</div>
+<div id="toast" class="toast" hidden></div>
+<script src="app.js" type="module"></script>
+</body>
+</html>

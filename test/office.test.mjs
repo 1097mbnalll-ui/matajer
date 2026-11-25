@@ -209,3 +209,18 @@ test("المراقب: حساب القارئ مرفوض = تنبيه مهم", asy
   await runMonitor(env);
   assert.match(env.sent[0].text, /قارئ المكتب/);
 });
+
+test("المدير يدعو الكل للاجتماع، وكل واحد يقرأ المحضر ويشوف مين باقي", async () => {
+  const env = makeEnv();
+  const id = (await A(env, "/agent/meeting-open", { emp: "manager", topic: "خطة الويكند" })).body.id;
+  assert.equal((await A(env, "/agent/meeting-invite", { emp: "noon", id })).status, 403);
+  const inv = await A(env, "/agent/meeting-invite", { emp: "manager", id });
+  assert.equal(Object.keys(inv.body.woke).length, TEAM.length - 1);
+  assert.equal(inv.body.woke.monitor, true);
+  assert.equal(inv.body.woke.noon, false, "اللي ما انربط له تشغيل تنحفظ له المهمة");
+  await A(env, "/agent/meeting-say", { emp: "monitor", id, text: "رأيي كذا" });
+  const r = await A(env, "/agent/meeting-read", { emp: "noon", id });
+  assert.equal(r.body.lines.length, 1);
+  assert.ok(!r.body.waitingFor.includes("monitor"));
+  assert.ok(r.body.waitingFor.includes("noon"));
+});

@@ -113,7 +113,7 @@ async function ownerApi(request, env, path, url) {
     const alerts = (await env.DB.prepare("SELECT * FROM alerts WHERE open = 1 ORDER BY CASE level WHEN 'urgent' THEN 0 WHEN 'important' THEN 1 ELSE 2 END, id DESC LIMIT 50").all()).results || [];
     const meetings = (await env.DB.prepare("SELECT * FROM meetings ORDER BY id DESC LIMIT 10").all()).results || [];
     return json(200, { ok: true, team: await teamState(env), areas: AREAS, levels: LEVELS, pending, alerts, meetings,
-      rules: { ...DEFAULT_RULES, ...(await getSetting(env, "rules", {})) }, caps: { fire: await getSetting(env, "fire_cap", 20), meetings: await getSetting(env, "meeting_cap", 5) } });
+      rules: { ...DEFAULT_RULES, ...(await getSetting(env, "rules", {})) }, caps: { fire: await getSetting(env, "fire_cap", 60), meetings: await getSetting(env, "meeting_cap", 5) } });
   }
   if (path === "/api/log") {
     const emp = url.searchParams.get("emp");
@@ -241,6 +241,22 @@ async function agentApi(request, env, path, url) {
     if (!m || m.status !== "open") return json(409, { ok: false, code: "meeting_closed" });
     await env.DB.prepare("INSERT INTO meeting_lines (meeting, at, emp, text) VALUES (?, ?, ?, ?)").bind(m.id, now(), emp, clip(body.text, 4000)).run();
     return json(200, { ok: true });
+  }
+  if (path === "/agent/meeting-read") {
+    const m = await env.DB.prepare("SELECT * FROM meetings WHERE id = ?").bind(Number(body.id ?? url.searchParams.get("id"))).first();
+    if (!m) return json(404, { ok: false });
+    const lines = (await env.DB.prepare("SELECT at, emp, text FROM meeting_lines WHERE meeting = ? ORDER BY id").bind(m.id).all()).results || [];
+    const spoke = new Set(lines.map((l) => l.emp));
+    return json(200, { ok: true, meeting: m, lines, waitingFor: TEAM.map((t) => t.key).filter((k) => !spoke.has(k)) });
+  }
+  if (path === "/agent/meeting-invite") { // المدير يصحّي الموظفين للاجتماع (كل واحد جلسة مستقلة)
+    if (emp !== "manager") return json(403, { ok: false, code: "manager_only" });
+    const m = await env.DB.prepare("SELECT * FROM meetings WHERE id = ?").bind(Number(body.id)).first();
+    if (!m || m.status !== "open") return json(409, { ok: false, code: "meeting_closed" });
+    const who = (Array.isArray(body.who) && body.who.length ? body.who : TEAM.map((t) => t.key)).filter((k) => teamKeys.has(k) && k !== "manager");
+    const out = {};
+    for (const k of who) out[k] = (await giveTask(env, k, `اجتماع رقم ${m.id}: ${m.topic}\n${clip(body.note, 1500)}\nاقرأ المحضر وقل رأيك بصراحة (موافق / معترض ولماذا / اقتراح أفضل).`, "المدير العام")).woke;
+    return json(200, { ok: true, woke: out });
   }
   if (path === "/agent/meeting-close") { // المدير بس يقفل الاجتماع ويكتب القرار
     if (emp !== "manager") return json(403, { ok: false, code: "manager_only" });
