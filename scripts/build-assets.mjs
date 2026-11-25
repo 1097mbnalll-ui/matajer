@@ -11,4 +11,8 @@ for (const f of (await readdir(dir)).sort()) {
 }
 out["/"] = out["/index.html"];
 await writeFile(new URL("../src/assets.js", import.meta.url), "// ملف مولّد من public/ بـ scripts/build-assets.mjs — لا تعدّله يدوياً\nexport default " + JSON.stringify(out) + ";\n");
-console.log("assets:", Object.keys(out).join(" "));
+// تعليمات الموظفين: تنقرا من المكتب نفسه (/agent/brief) عشان الجلسات ما تحتاج المستودع
+const ag = {};
+for (const f of (await readdir(new URL("../agents/", import.meta.url))).sort()) if (f.endsWith(".md")) ag[f.replace(/\.md$/, "")] = await readFile(new URL("../agents/" + f, import.meta.url), "utf8");
+await writeFile(new URL("../src/agents-text.js", import.meta.url), "// ملف مولّد من agents/ بـ scripts/build-assets.mjs — لا تعدّله يدوياً\nexport default " + JSON.stringify(ag) + ";\n");
+console.log("assets:", Object.keys(out).join(" "), "| agents:", Object.keys(ag).join(" "));

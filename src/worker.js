@@ -7,6 +7,7 @@ import { TEAM, AREAS, LEVELS, teamKeys, areaOf } from "./team.js";
 import { ensureSchema, now, log, getSetting, setSetting, permsOf, bump, teamState, hydrate, CFG_KEYS } from "./db.js";
 import { tg, wake, ownerChat, tgHookSecret, routineOf } from "./notify.js";
 import ASSETS from "./assets.js";
+import AGENT_TEXT from "./agents-text.js";
 import { runNoon, noonCall, noonReadAllowed, parseNoonKey, noonKey } from "./noon.js";
 import { runMonitor, analysisPrompt, DEFAULT_RULES, storeCall } from "./monitor.js";
 
@@ -18,6 +19,7 @@ async function hmac(key, s) {
   const k = await crypto.subtle.importKey("raw", enc.encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   return hex(await crypto.subtle.sign("HMAC", k, enc.encode(s)));
 }
+function toB64(buf) { let s = ""; for (let i = 0; i < buf.length; i += 8192) s += String.fromCharCode(...buf.subarray(i, i + 8192)); return btoa(s); }
 async function pbkdf2(pw, salt) {
   const k = await crypto.subtle.importKey("raw", enc.encode(pw), "PBKDF2", false, ["deriveBits"]);
   return hex(await crypto.subtle.deriveBits({ name: "PBKDF2", salt: enc.encode(salt), iterations: 100000, hash: "SHA-256" }, k, 256));
@@ -284,7 +286,8 @@ async function agentApi(request, env, path, url) {
     const alerts = (await env.DB.prepare("SELECT id, level, title, body, first FROM alerts WHERE open = 1 ORDER BY id DESC LIMIT 30").all()).results || [];
     const meetings = (await env.DB.prepare("SELECT id, topic, by, status FROM meetings WHERE status = 'open' ORDER BY id").all()).results || [];
     const recent = (await env.DB.prepare("SELECT at, act, info FROM logs WHERE emp = ? ORDER BY id DESC LIMIT 30").bind(emp).all()).results || [];
-    return json(200, { ok: true, me: TEAM.find((t) => t.key === emp), perms: await permsOf(env, emp), areas: AREAS, tasks, requests: mine, alerts, meetings, recent, team: TEAM.map((t) => t.key) });
+    const instructions = `${AGENT_TEXT.common || ""}\n\n${AGENT_TEXT[emp] || ""}`;
+    return json(200, { ok: true, instructions, me: TEAM.find((t) => t.key === emp), perms: await permsOf(env, emp), areas: AREAS, tasks, requests: mine, alerts, meetings, recent, team: TEAM.map((t) => t.key) });
   }
   if (path === "/agent/status") {
     const st = ["idle", "working", "meeting"].includes(body.status) ? body.status : "idle";
@@ -408,6 +411,28 @@ async function agentApi(request, env, path, url) {
     const r = await noonCall(env, method, p, method === "POST" ? body.body || {} : undefined);
     await log(env, emp, "read_noon", { path: p.slice(0, 80), ok: r.ok });
     return json(r.ok ? 200 : 502, { ok: r.ok, status: r.status, code: r.code || null, data: r.data });
+  }
+  // تقارير نون (مثل المبيعات): المكتب يطلب التقرير وينزّله بنفسه ويرجّع محتواه
+  if (path === "/agent/noon-export") {
+    if (!["noon", "manager", "morning"].includes(emp)) return json(403, { ok: false, code: "not_allowed" });
+    if (body.export_code) {
+      const st = await noonCall(env, "POST", "/impex/v1/export/status", { export_code: clip(body.export_code, 200) });
+      if (!st.ok) return json(502, { ok: false, status: st.status, code: st.code || null, data: st.data });
+      const url2 = st.data?.download_url;
+      if (!url2 || !/^https:\/\//.test(url2)) return json(200, { ok: true, ready: false, status: st.data?.export_status });
+      const dl = await (env.fetch || fetch)(url2).catch(() => null);
+      if (!dl || !dl.ok) return json(502, { ok: false, code: "download_failed" });
+      const buf = new Uint8Array(await dl.arrayBuffer());
+      const head = String.fromCharCode(...buf.slice(0, 4));
+      if (head.startsWith("PK")) return json(200, { ok: true, ready: true, format: "xlsx_or_zip", bytes: buf.length, base64: buf.length <= 3e6 ? toB64(buf) : null });
+      const text = new TextDecoder().decode(buf);
+      await log(env, emp, "noon_export", { bytes: buf.length });
+      return json(200, { ok: true, ready: true, format: "text", bytes: buf.length, text: text.slice(0, 400000), truncated: text.length > 400000 });
+    }
+    if (!body.export_category_code) return json(400, { ok: false, code: "need_export_category_code_or_export_code" });
+    const cr = await noonCall(env, "POST", "/impex/v1/export/create", { export_category_code: clip(body.export_category_code, 100), params: body.params && typeof body.params === "object" ? body.params : {} });
+    await log(env, emp, "noon_export_requested", { cat: clip(body.export_category_code, 100), ok: cr.ok });
+    return json(cr.ok ? 200 : 502, { ok: cr.ok, status: cr.status, data: cr.data });
   }
   if (path === "/agent/noon-skus") { // مسؤول نون يحدد المنتجات اللي تنراقب (إعداد مكتب = بسيط)
     if (emp !== "noon") return json(403, { ok: false, code: "noon_only" });

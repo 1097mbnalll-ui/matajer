@@ -114,3 +114,26 @@ test("الموظفين يقرون نون بس (ما يقدرون يعدلون)،
   await runNoon(env);
   assert.match(env.sent.at(-1).text, /ما قدر يدخل نون/);
 });
+
+test("التعليمات تجي من المكتب، ومسؤول نون يطلب تقرير وينزّله عن طريق المكتب", async () => {
+  const env = makeEnv();
+  const base = env.fetch;
+  env.fetch = async (u, init = {}) => {
+    u = String(u);
+    if (u.endsWith("/impex/v1/export/create")) return Response.json({ export_code: "EX1" });
+    if (u.endsWith("/impex/v1/export/status")) return Response.json({ export_code: "EX1", export_status: "done", download_url: "https://files.noon.test/ex1.csv" });
+    if (u === "https://files.noon.test/ex1.csv") return new Response("sku,qty,total\nA1,3,30\n");
+    return base(u, init);
+  };
+  const c = await login(env);
+  await call(env, "/api/noon-key", { cookie: c, body: { text: keyFile() } });
+  await call(env, "/api/task", { cookie: c, body: { emp: "noon", text: "مبيعات اليوم" } });
+  const tok = env.fired.at(-1).body.text.match(/[a-f0-9]{48}/)[0];
+  const b = await call(env, "/agent/brief", { body: { emp: "noon" }, agent: tok });
+  assert.match(b.body.instructions, /مسؤول نون/); assert.match(b.body.instructions, /الكبير/);
+  assert.equal(b.body.tasks[0].text, "مبيعات اليوم");
+  const cr = await call(env, "/agent/noon-export", { body: { emp: "noon", export_category_code: "sales", params: {} }, agent: tok });
+  assert.equal(cr.body.data.export_code, "EX1");
+  const dl = await call(env, "/agent/noon-export", { body: { emp: "noon", export_code: "EX1" }, agent: tok });
+  assert.equal(dl.body.ready, true); assert.match(dl.body.text, /A1,3,30/);
+});
