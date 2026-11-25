@@ -26,6 +26,8 @@ let ready = false;
 export async function ensureSchema(env) {
   if (ready && !env.__fresh) return;
   await env.DB.batch(SCHEMA.map((s) => env.DB.prepare(s)));
+  // أعمدة انضافت بعدين (الجدول موجود من قبل)
+  for (const sql of ["ALTER TABLE meetings ADD COLUMN who TEXT"]) { try { await env.DB.prepare(sql).run(); } catch {} }
   ready = true;
 }
 

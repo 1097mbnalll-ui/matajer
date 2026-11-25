@@ -37,6 +37,7 @@ function sameText(a, b) {
 }
 const json = (status, body, headers = {}) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers } });
 const clip = (s, n) => String(s ?? "").slice(0, n);
+const riyadhDayStr = (back = 0) => new Date(Date.now() + 3 * 3600e3 - back * 864e5).toISOString().slice(0, 10);
 const nameOf = (k) => TEAM.find((t) => t.key === k)?.name || k;
 // ليش ما صحى الموظف: بكلام واضح للمالك
 const WHY = { not_configured: "ما انربطت جلسته للحين (اضغط عليه في المكتب ← ربط الجلسة)", daily_cap: "وصلنا الحد اليومي للجلسات (تقدر ترفعه من الإعدادات)", fire_failed: "Claude رفض التشغيل (يمكن رمز التشغيل انحذف أو انتهى، اربطه من جديد)" };
@@ -195,6 +196,34 @@ async function ownerApi(request, env, path, url) {
     const st = await env.DB.prepare("SELECT status, session_url FROM emp_state WHERE emp = ?").bind(emp).first();
     return json(200, { ok: true, messages: msgs, cards, status: st?.status || "idle", sessionUrl: st?.session_url || null });
   }
+  if (path === "/api/usage") { // الاستهلاك: عدد الجلسات الفعلي من سجل المكتب + تقدير التوكنز والدولار
+    const per = Number(await getSetting(env, "cost_per_session", 0.35)), tokPer = Number(await getSetting(env, "tokens_per_session", 600000));
+    const dayStart = (d) => Date.parse(riyadhDayStr(d) + "T00:00:00+03:00");
+    const rows = (await env.DB.prepare("SELECT at, emp FROM logs WHERE act = 'woke' AND at >= ?").bind(now() - 31 * 864e5).all()).results || [];
+    const today = dayStart(0), week = now() - 7 * 864e5, month = now() - 30 * 864e5;
+    const sum = (from) => { const by = {}; let n = 0; for (const r of rows) if (r.at >= from) { n++; by[r.emp] = (by[r.emp] || 0) + 1; } return { sessions: n, usd: +(n * per).toFixed(2), tokens: n * tokPer, by }; };
+    return json(200, { ok: true, perSession: per, tokensPerSession: tokPer, today: sum(today), week: sum(week), month: sum(month), fireCap: Number(await getSetting(env, "fire_cap", 60)) });
+  }
+  if (path === "/api/meeting-new") { // المالك يسوي اجتماع: يختار الموظفين والموضوع، وسلطان يدير النقاش
+    const topic = clip(body.topic, 500).trim();
+    const who = [...new Set((Array.isArray(body.who) ? body.who : []).filter((k) => teamKeys.has(k)))];
+    if (!topic) return json(400, { ok: false, code: "no_topic" });
+    if (who.length < 2) return json(400, { ok: false, code: "need_two" });
+    const cap = Number(await getSetting(env, "meeting_cap", 5));
+    if (!(await bump(env, "meeting", cap))) return json(429, { ok: false, code: "meeting_cap", cap });
+    const m = await env.DB.prepare("INSERT INTO meetings (at, by, topic, who) VALUES (?, 'owner', ?, ?) RETURNING id").bind(now(), topic, JSON.stringify(who)).first();
+    if (body.note) await env.DB.prepare("INSERT INTO meeting_lines (meeting, at, emp, text) VALUES (?, ?, 'owner', ?)").bind(m.id, now(), clip(body.note, 2000)).run();
+    const names = who.map((k) => TEAM.find((t) => t.key === k).person).join("، ");
+    const woke = {};
+    for (const k of who) {
+      if (k === "manager") continue;
+      woke[k] = (await giveTask(env, k, `اجتماع رقم ${m.id} طلبه المالك: ${topic}\nالمشاركين: ${names}\nاقرأ المحضر (meeting-read)، وقل رأيك بصراحة (meeting-say). إذا فيه خلاف رد على زملائك بالاسم. ممنوع أي تنفيذ من هالاجتماع بدون موافقة المالك.`, "المدير العام", null, `اجتماع: ${topic}`)).woke;
+    }
+    // سلطان يدير الاجتماع دايماً (حتى لو ما اختاره المالك كمشارك)
+    woke.manager = (await giveTask(env, "manager", `أدر الاجتماع رقم ${m.id} اللي طلبه المالك: ${topic}\nالمشاركين: ${names}\nانتظر آراءهم (meeting-read لين waitingFor تفضى، حد ٢٠ دقيقة)، سوّ جولة ثانية للخلاف بس، وبعدها meeting-close بالقرار وagreed. ${who.includes("manager") ? "وأنت مشارك بعد، قل رأيك." : "أنت تدير بس."} بعدها أرسل للمالك خلاصة قصيرة (/agent/tell). أي تنفيذ يحتاج موافقة المالك.`, "الموقع", null, `أدر اجتماع: ${topic}`)).woke;
+    await log(env, "manager", "meeting_opened", { id: m.id, topic: topic.slice(0, 200), by: "المالك" });
+    return json(200, { ok: true, id: m.id, woke });
+  }
   if (path === "/api/meeting-say") { // المالك يعلّق في قروب الاجتماع
     const m = await env.DB.prepare("SELECT * FROM meetings WHERE id = ?").bind(Number(body.id)).first();
     if (!m) return json(404, { ok: false });
@@ -225,6 +254,7 @@ async function ownerApi(request, env, path, url) {
   if (path === "/api/decide") return json(...(await decide(env, Number(body.id), body.yes === true, "الموقع")));
   if (path === "/api/perm") {
     if (!teamKeys.has(body.emp) || !areaOf(body.area) || !LEVELS.includes(body.level)) return json(400, { ok: false, code: "bad" });
+    if (body.emp === "noon" && body.level === "auto") return json(400, { ok: false, code: "noon_red_line" }); // 🔴 مسؤول نون ما ينفّذ لحاله أبداً
     await env.DB.prepare("INSERT INTO perms (emp, area, level) VALUES (?, ?, ?) ON CONFLICT(emp, area) DO UPDATE SET level = excluded.level").bind(body.emp, body.area, body.level).run();
     await log(env, body.emp, "perm_changed", { area: areaOf(body.area).name, level: body.level, by: "المالك" });
     return json(200, { ok: true, perms: await permsOf(env, body.emp) });
@@ -429,7 +459,8 @@ async function agentApi(request, env, path, url) {
     if (!m) return json(404, { ok: false });
     const lines = (await env.DB.prepare("SELECT at, emp, text FROM meeting_lines WHERE meeting = ? ORDER BY id").bind(m.id).all()).results || [];
     const spoke = new Set(lines.map((l) => l.emp));
-    return json(200, { ok: true, meeting: m, lines, waitingFor: TEAM.map((t) => t.key).filter((k) => !spoke.has(k)) });
+    const members = m.who ? JSON.parse(m.who) : TEAM.map((t) => t.key);
+    return json(200, { ok: true, meeting: m, members, lines, waitingFor: members.filter((k) => !spoke.has(k)) });
   }
   if (path === "/agent/meeting-invite") { // المدير يصحّي الموظفين للاجتماع (كل واحد جلسة مستقلة)
     if (emp !== "manager") return json(403, { ok: false, code: "manager_only" });
@@ -446,11 +477,13 @@ async function agentApi(request, env, path, url) {
     if (!m || m.status !== "open") return json(409, { ok: false, code: "meeting_closed" });
     const spoke = new Set(((await env.DB.prepare("SELECT DISTINCT emp FROM meeting_lines WHERE meeting = ?").bind(m.id).all()).results || []).map((r) => r.emp));
     const agreed = Array.isArray(body.agreed) ? body.agreed.filter((k) => teamKeys.has(k) && spoke.has(k)) : [];
-    const all = agreed.length === TEAM.length;
+    const members = m.who ? JSON.parse(m.who) : TEAM.map((t) => t.key);
+    const all = members.every((k) => agreed.includes(k));
     await env.DB.prepare("UPDATE meetings SET status = ?, decision = ?, agreed = ?, closed = ? WHERE id = ?")
       .bind(all ? "agreed" : "no_consensus", clip(body.decision, 4000), JSON.stringify(agreed), now(), m.id).run();
     await log(env, emp, "meeting_closed", { id: m.id, all });
-    return json(200, { ok: true, status: all ? "agreed" : "no_consensus", missing: TEAM.map((t) => t.key).filter((k) => !agreed.includes(k)) });
+    if (m.by === "owner") await tg(env, `👥 خلص اجتماع «${m.topic}»\nالقرار: ${clip(body.decision, 1500)}`);
+    return json(200, { ok: true, status: all ? "agreed" : "no_consensus", missing: members.filter((k) => !agreed.includes(k)) });
   }
 
   // ----- طلب تنفيذ (قاعدة المالك: الكبير ينتظر، البسيط ينفذ، وأي نزول بعد اجتماع الكل) -----
@@ -463,17 +496,20 @@ async function agentApi(request, env, path, url) {
     let meeting = null;
     if (deploy) {
       meeting = await env.DB.prepare("SELECT * FROM meetings WHERE id = ?").bind(Number(body.meeting)).first();
-      if (!meeting || meeting.status !== "agreed") return json(409, { ok: false, code: "needs_full_meeting" });
+      if (!meeting || meeting.status !== "agreed" || meeting.who) return json(409, { ok: false, code: "needs_full_meeting" }); // اجتماع الفريق كامل، مو اجتماع مخصص
     }
     const testsFailed = body.testsPassed === false;
-    const big = area.big || testsFailed || level === "propose";
+    // 🔴 خط أحمر (قرار المالك ٢٥ نوفمبر ٢٠٢٦): أي تعديل يخص نون، ولو مثقال ذرة، ينتظر إذن المالك دايماً.
+    // أي طلب من مسؤول نون، أو يذكر نون، يصير «كبير» مهما كانت الصلاحية أو المجال أو الاجتماع.
+    const noonRed = emp === "noon" || body.noon === true || /نون|noon/i.test(`${body.title || ""} ${body.detail || ""}`);
+    const big = area.big || testsFailed || level === "propose" || noonRed;
     const status = big ? "pending" : "approved";
     const r = await env.DB.prepare("INSERT INTO requests (at, emp, area, big, deploy, meeting, title, detail, status, decided, how) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id")
       .bind(now(), emp, area.key, big ? 1 : 0, deploy ? 1 : 0, meeting ? meeting.id : null, clip(body.title, 300), clip(body.detail, 4000), status, big ? null : now(), big ? null : "تلقائي (بسيط)").first();
     await log(env, emp, big ? "asked_approval" : "auto_approved", { id: r.id, title: clip(body.title, 200), area: area.name });
     await addMsg(env, emp, "emp", clip(body.title, 300), "card", r.id);
     if (big) {
-      await tg(env, `🟡 ينتظر موافقتك (${nameOf(emp)})\n${clip(body.title, 300)}\nالمجال: ${area.name}${testsFailed ? "\n⚠️ فيه اختبار فشل" : ""}${meeting ? `\nاجتماع رقم ${meeting.id}: اتفقوا كلهم` : ""}\n\n${clip(body.detail, 1500)}`,
+      await tg(env, `${noonRed ? "🔴 خط أحمر · تعديل على نون\n" : ""}🟡 ينتظر موافقتك (${nameOf(emp)})\n${clip(body.title, 300)}\nالمجال: ${area.name}${testsFailed ? "\n⚠️ فيه اختبار فشل" : ""}${meeting ? `\nاجتماع رقم ${meeting.id}: اتفقوا كلهم` : ""}\n\n${clip(body.detail, 1500)}`,
         [[{ text: "✅ موافق", callback_data: `a:${r.id}:y` }, { text: "❌ رفض", callback_data: `a:${r.id}:n` }]]);
     } else {
       await tg(env, `🟢 ${nameOf(emp)} نفّذ تعديل بسيط بعد اتفاق الفريق:\n${clip(body.title, 300)}`, [[{ text: "↩️ تراجع", callback_data: `u:${r.id}` }]]);

@@ -428,3 +428,43 @@ test("المالك يعلّق في قروب الاجتماع ويصحى المد
   assert.equal(r.body.lines[0].emp, "owner");
   assert.ok(env.fired.some((f) => f.u.includes("trig_man") && f.body.text.includes("لا ترفعون الأسعار")));
 });
+
+test("🔴 خط نون الأحمر: أي طلب من مسؤول نون أو يذكر نون ينتظر المالك، وصلاحيته ما تصير «ينفّذ لحاله»", async () => {
+  const env = makeEnv();
+  const c = await login(env);
+  assert.equal((await A(env, "/agent/request", { emp: "noon", area: "text", title: "تصحيح وصف منتج" })).body.status, "pending");
+  assert.equal((await A(env, "/agent/request", { emp: "pricing", area: "text", title: "تعديل عنوان المنتج في نون" })).body.status, "pending");
+  assert.equal((await A(env, "/agent/request", { emp: "pricing", area: "text", title: "x", noon: true })).body.status, "pending");
+  assert.match(env.sent.at(-1).text, /خط أحمر/);
+  assert.equal((await call(env, "/api/perm", { cookie: c, body: { emp: "noon", area: "text", level: "auto" } })).body.code, "noon_red_line");
+  assert.equal((await A(env, "/agent/request", { emp: "pricing", area: "text", title: "تصحيح كلمة في الموقع" })).body.status, "approved");
+});
+
+test("المالك يسوي اجتماع بموظفين يختارهم، وسلطان يديره، والقرار يكون بين المشاركين بس", async () => {
+  const env = makeEnv();
+  const c = await login(env);
+  assert.equal((await call(env, "/api/meeting-new", { cookie: c, body: { topic: "x", who: ["noon"] } })).body.code, "need_two");
+  const r = await call(env, "/api/meeting-new", { cookie: c, body: { topic: "عروض الويكند", who: ["noon", "monitor"], note: "ركزوا على الحليب" } });
+  assert.equal(r.status, 200);
+  assert.ok(env.fired.some((f) => f.u.includes("trig_man") && f.body.text.includes("أدر الاجتماع")));
+  assert.ok(env.fired.some((f) => f.u.includes("trig_mon") && f.body.text.includes("عروض الويكند")));
+  const rd = await A(env, "/agent/meeting-read", { emp: "monitor", id: r.body.id });
+  assert.deepEqual(rd.body.members, ["noon", "monitor"]); assert.equal(rd.body.lines[0].emp, "owner");
+  await A(env, "/agent/meeting-say", { emp: "noon", id: r.body.id, text: "موافق" });
+  await A(env, "/agent/meeting-say", { emp: "monitor", id: r.body.id, text: "موافق" });
+  const cl = await A(env, "/agent/meeting-close", { emp: "manager", id: r.body.id, decision: "عرض على الحليب", agreed: ["noon", "monitor"] });
+  assert.equal(cl.body.status, "agreed");
+  assert.match(env.sent.at(-1).text, /خلص اجتماع «عروض الويكند»/);
+  // اجتماع المالك ما يكفي للنزول
+  assert.equal((await A(env, "/agent/request", { emp: "manager", area: "text", title: "نزول", deploy: true, meeting: r.body.id })).body.code, "needs_full_meeting");
+});
+
+test("الاستهلاك: يعد الجلسات الفعلية اليوم ولكل موظف، مع تقدير الدولار", async () => {
+  const env = makeEnv();
+  const c = await login(env);
+  await call(env, "/api/task", { cookie: c, body: { emp: "manager", text: "1" } });
+  await call(env, "/api/task", { cookie: c, body: { emp: "manager", text: "2" } });
+  await call(env, "/api/task", { cookie: c, body: { emp: "monitor", text: "3" } });
+  const u = (await call(env, "/api/usage", { cookie: c })).body;
+  assert.equal(u.today.sessions, 3); assert.equal(u.today.by.manager, 2); assert.equal(u.today.usd, 1.05);
+});

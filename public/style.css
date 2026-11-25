@@ -183,3 +183,16 @@ body { background: var(--card); }
 .send:disabled { opacity: .4; }
 .infohead { display: flex; gap: 14px; align-items: center; margin-bottom: 6px; } .infohead h2 { margin: 0; }
 .alerts { padding-top: 10px; }
+
+.hbtns { display: flex; gap: 6px; } .pill.ghost { background: var(--brand-soft); color: var(--brand); }
+.usage { width: 100%; margin-top: 8px; border: 1px solid var(--line); background: var(--card); border-radius: 12px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13.5px; text-align: start; }
+.usage small { color: var(--muted); white-space: nowrap; }
+.usagecard { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin-bottom: 8px; }
+.usagecard table { width: 100%; border-collapse: collapse; font-size: 13.5px; } .usagecard td { padding: 5px 2px; border-bottom: 1px dashed var(--line); }
+.redline { background: #fdeceb; color: #a32820; font-weight: 700; font-size: 13px; text-align: center; padding: 7px 12px; border-bottom: 1px solid #f3c5c1; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .redline { background: #3a1d1b; color: #ff9a90; border-color: #5a2b28; } }
+.picks { display: grid; gap: 6px; }
+.pick { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 7px 10px; background: var(--card); }
+.pick input { width: 20px; height: 20px; accent-color: var(--brand); }
+.pick span { display: grid; } .pick small { color: var(--muted); }
+.pick:has(input:checked) { border-color: var(--brand); background: var(--brand-soft); }

@@ -122,11 +122,11 @@ const KIND_PREFIX = { card: "ينتظر موافقتك: ", alert: "تنبيه: "
 const LINK_ERR = { token_is_url: "هذا رابط، مو الرمز. الرمز يبدأ بـ sk-ant-", token_empty: "خانة الرمز فاضية", token_masked: "هذا رمز مختصر فيه (...). سوّ رمز جديد (Regenerate) وانسخه كامل على طول", token_short: "الرمز ناقص. انسخه كامل", bad_routine_id: "رقم المهمة غلط" };
 
 // ---------- الحالة والتبويبات ----------
-let C = null, TAB = "chats", OPEN = null; // OPEN = {type:"emp",key} | {type:"meet",id}
+let C = null, USG = null, TAB = "chats", OPEN = null; // OPEN = {type:"emp",key} | {type:"meet",id}
 async function load() {
   try {
-    const [s, c] = await Promise.all([api("/api/state"), api("/api/chats")]);
-    if (!s.ok || !c.ok) return; S = s; C = c;
+    const [s, c, u] = await Promise.all([api("/api/state"), api("/api/chats"), api("/api/usage")]);
+    if (!s.ok || !c.ok) return; S = s; C = c; USG = u.ok ? u : null;
   } catch { return; }
   for (const t of S.team) { const x = C.chats.find((y) => y.key === t.key); if (x) Object.assign(t, { linked: x.linked }); }
   $("#app").hidden = false;
@@ -158,8 +158,9 @@ function chatsHTML() {
       rows.push(`<button class="crow" data-meet="${m.id}">${avatar({ status: m.status === "open" ? "meeting" : null })}<span class="mid"><span class="nm"><b>اجتماع: ${esc(m.topic)}</b></span><span class="last">${m.last ? esc(nm + ": " + m.last.text.replace(/\s+/g, " ").slice(0, 80)) : '<span class="muted">بدأ الحين</span>'}</span></span><span class="side"><small>${timeShort(m.at)}</small></span></button>`);
     }
   }
-  return `<header class="tophead"><h1 class="title">المحادثات</h1>${C.pending ? `<button class="pill" data-tab="ok">${num(C.pending)} ينتظر موافقتك</button>` : ""}</header>
-    <div class="searchbox"><input id="q" placeholder="ابحث في المحادثات" value="${esc(q)}"></div><div class="clist">${rows.join("") || '<div class="empty">ما فيه نتائج</div>'}</div>`;
+  const usage = USG ? `<button class="usage" data-tab="set"><span>استهلاك اليوم: <b>${num(USG.today.sessions)}</b> جلسة · تقريباً <b>${USG.today.usd.toLocaleString("ar-SA")}$</b></span><small>الحد ${num(USG.fireCap)} جلسة</small></button>` : "";
+  return `<header class="tophead"><h1 class="title">المحادثات</h1><span class="hbtns">${C.pending ? `<button class="pill" data-tab="ok">${num(C.pending)} ينتظر موافقتك</button>` : ""}<button class="pill ghost" data-newmeet>+ اجتماع</button></span></header>
+    <div class="searchbox"><input id="q" placeholder="ابحث في المحادثات" value="${esc(q)}">${usage}</div><div class="clist">${rows.join("") || '<div class="empty">ما فيه نتائج</div>'}</div>`;
 }
 function officeHTML() {
   const alerts = S.alerts.slice(0, 6).map((a) => `<div class="alert ${a.level}"><div class="grow"><div class="t">${ALERT_NAME[a.level]} · ${esc(a.title)}</div><div class="b">${esc(a.body || "")} · ${when(a.first)}</div></div><button class="btn small" data-analyze="${a.id}">حلّلها</button></div>`).join("");
@@ -171,8 +172,16 @@ function approvalsHTML() {
   return `<header class="tophead"><h1 class="title">الموافقات</h1></header><div class="pad">${S.pending.map((q) => `<div class="req"><div class="meta">${esc(nm(q.emp))} · ${esc(S.areas.find((a) => a.key === q.area)?.name)} · ${when(q.at)}${q.meeting ? ` · بعد اجتماع رقم ${q.meeting}` : ""}</div>
     <b>${esc(q.title)}</b>${q.detail ? `<pre>${esc(q.detail)}</pre>` : ""}<div class="btns"><button class="btn primary" data-yes="${q.id}">موافق</button><button class="btn danger" data-no="${q.id}">رفض</button></div></div>`).join("") || '<div class="empty">ما فيه شي ينتظرك</div>'}</div>`;
 }
+function usageHTML() {
+  if (!USG) return "";
+  const row = (lbl, x) => `<tr><td>${lbl}</td><td><b>${num(x.sessions)}</b> جلسة</td><td>≈ ${num(Math.round(x.tokens / 1000))} ألف توكن</td><td>≈ <b>${x.usd.toLocaleString("ar-SA")}$</b></td></tr>`;
+  const by = Object.entries(USG.today.by).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${esc(S.team.find((t) => t.key === k)?.person || k)}: ${num(n)}`).join(" · ");
+  return `<div class="usagecard"><h3 style="margin-top:0">الاستهلاك</h3><table>${row("اليوم", USG.today)}${row("آخر ٧ أيام", USG.week)}${row("آخر ٣٠ يوم", USG.month)}</table>
+    ${by ? `<p class="muted" style="font-size:13px;margin:8px 0 0">اليوم لكل موظف: ${by}</p>` : ""}
+    <p class="muted" style="font-size:12.5px;margin:8px 0 0">عدد الجلسات حقيقي من سجل المكتب. التوكنز والدولار <b>تقدير</b> (حوالي ${USG.perSession.toLocaleString("ar-SA")}$ للجلسة بسعر API). أنت على اشتراك Max، يعني ما تندفع فلوس زيادة على كل جلسة؛ الجلسات تنخصم من حد الاشتراك. الحد الحقيقي تشوفه في claude.ai ← Settings ← Usage.</p></div>`;
+}
 function settingsHTML() {
-  return `<label class="field"><span>حد كاش المندوب (ر.س)</span><input id="cashLimit" type="number" inputmode="numeric" value="${S.rules.cashLimit}"></label>
+  return usageHTML() + `<label class="field"><span>حد كاش المندوب (ر.س)</span><input id="cashLimit" type="number" inputmode="numeric" value="${S.rules.cashLimit}"></label>
     <label class="field"><span>متى يصحى فهد (المراقب) لحاله؟</span><select id="wakeOn">
       <option value="urgent" ${S.rules.wakeOn === "urgent" ? "selected" : ""}>العاجل بس</option><option value="important" ${S.rules.wakeOn === "important" ? "selected" : ""}>العاجل والمهم</option><option value="none" ${S.rules.wakeOn === "none" ? "selected" : ""}>ولا شي، بس لما أضغط «حلّلها»</option></select></label>
     <label class="field"><span>أقصى عدد جلسات باليوم (عشان حد اشتراك Max)</span><input id="fireCap" type="number" inputmode="numeric" value="${S.caps.fire}"></label>
@@ -224,6 +233,7 @@ async function refreshOpen(first) {
     const chips = (t.chips || []).map((c) => `<button class="chip" data-chip="${esc(c)}">${esc(c)}</button>`).join("");
     const sub = r.status === "working" ? "يشتغل الحين…" : !ch?.linked ? "ما انربطت جلسته" : r.status === "meeting" ? "في اجتماع" : "متاح";
     $("#chat").innerHTML = `<header class="chathead"><button class="icon" data-close-chat aria-label="رجوع">${SV(IC.back, 26)}</button>${avatar({ ...t, status: null }, 42)}<div class="who2"><b>${esc(t.person)}</b><small class="${r.status === "working" ? "on" : ""}">${esc(t.name)} · ${sub}</small></div>${live}<button class="icon" data-info="${key}" aria-label="معلومات ${esc(t.person)}">${SV(IC.info, 22)}</button></header>
+      ${key === "noon" ? '<div class="redline">🔴 خط أحمر: راكان ما يعدّل أي شي على نون، ولو مثقال ذرة، إلا بإذنك</div>' : ""}
       <div class="msgs" id="msgs">${msgs}${typing}</div>
       <div class="chips">${chips}</div>
       <form class="compose" id="compose"><label class="icon attach" aria-label="إرفاق ملف">${SV(IC.attach, 20)}<input type="file" id="msgFile" hidden></label><div class="inwrap"><span id="fileName" class="fname"></span><textarea id="msgIn" rows="1" placeholder="اكتب رسالة لـ ${esc(t.person)}…"></textarea></div><button class="icon send" type="submit" aria-label="أرسل">${SV(IC.send, 20, "#fff")}</button></form>`;
@@ -286,13 +296,32 @@ async function openInfo(key) {
     <h3>بطاقة الصلاحيات</h3>${perms}<h3>السجل</h3>${log}`);
 }
 
+// ---------- اجتماع جديد ----------
+function openNewMeeting() {
+  openSheet(`<h2>اجتماع جديد</h2><p class="muted" style="margin-top:0">اختر الموظفين والموضوع، وسلطان (المدير العام) يدير النقاش ويرسل لك القرار.</p>
+    <label class="field"><span>الموضوع</span><input id="mTopic" placeholder="مثلاً: عروض الويكند"></label>
+    <label class="field"><span>ملاحظة منك للمجتمعين (اختياري)</span><textarea id="mNote" placeholder="مثلاً: ركزوا على المنتجات اللي خلصت"></textarea></label>
+    <div class="field"><span>المشاركين (اثنين أو أكثر)</span><div class="picks">${S.team.map((t) => `<label class="pick"><input type="checkbox" value="${t.key}">${avatar({ ...t, status: null }, 36)}<span><b>${esc(t.person)}</b><small>${esc(t.name)}</small></span></label>`).join("")}</div></div>
+    <p class="muted" id="mCost" style="font-size:13px"></p>
+    <div class="btns"><button class="btn primary" id="mStart">ابدأ الاجتماع</button></div>`);
+  const upd = () => { const n = document.querySelectorAll(".picks input:checked").length; $("#mCost").textContent = n ? `بياخذ تقريباً ${num(n + (document.querySelector('.picks input[value="manager"]:checked') ? 0 : 1))} جلسات أو أكثر من اشتراكك.` : ""; };
+  document.querySelectorAll(".picks input").forEach((i) => i.addEventListener("change", upd));
+}
+
 // ---------- الضغطات ----------
 document.addEventListener("click", async (e) => {
-  const el = e.target.closest("[data-close],[data-table],[data-tab],[data-chat],[data-meet],[data-emp],[data-chip],[data-close-chat],[data-info],[data-perm],[data-yes],[data-no],[data-analyze],[data-link],[data-unlink],#tgSetup,#saveCfg,#saveNoon,#testNoon,#saveRules,#logout");
+  const el = e.target.closest("[data-newmeet],#mStart,[data-close],[data-table],[data-tab],[data-chat],[data-meet],[data-emp],[data-chip],[data-close-chat],[data-info],[data-perm],[data-yes],[data-no],[data-analyze],[data-link],[data-unlink],#tgSetup,#saveCfg,#saveNoon,#testNoon,#saveRules,#logout");
   if (!el) return;
   const d = el.dataset;
   try {
-    if (d.close !== undefined) closeSheet();
+    if (d.newmeet !== undefined) openNewMeeting();
+    else if (el.id === "mStart") {
+      const who = [...document.querySelectorAll(".picks input:checked")].map((i) => i.value);
+      const r = await api("/api/meeting-new", { topic: $("#mTopic").value.trim(), note: $("#mNote").value.trim(), who });
+      if (!r.ok) { toast({ no_topic: "اكتب الموضوع", need_two: "اختر موظفين اثنين أو أكثر", meeting_cap: "وصلت حد الاجتماعات اليوم" }[r.code] || "ما بدأ الاجتماع"); return; }
+      closeSheet(); toast("بدأ الاجتماع"); await load(); openMeet(r.id);
+    }
+    else if (d.close !== undefined) closeSheet();
     else if (d.tab) { TAB = d.tab; render(); window.scrollTo(0, 0); }
     else if (d.chat) openChat(d.chat);
     else if (d.table !== undefined) { TAB = "chats"; render(); }
