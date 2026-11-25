@@ -36,9 +36,14 @@ export async function routineOf(env, emp) {
   const def = TEAM.find((t) => t.key === emp)?.routine || null;
   return { id: env[`ROUTINE_${K}_ID`] || saved.id || def, token: env[`ROUTINE_${K}_TOKEN`] || saved.token || null };
 }
-export async function wake(env, emp, text) {
+export async function wake(env, emp, text, opts = {}) {
   const { id, token } = await routineOf(env, emp);
   if (!id || !token) { await log(env, emp, "wake_skipped", { why: "not_configured" }); return { ok: false, code: "not_configured" }; }
+  // توفير: لو الموظف شغّال الحين (جلسة بدأت قبل أقل من ٢٠ دقيقة)، ما نفتح جلسة ثانية؛ المهمة تنتظره وهو يشيك عليها قبل ما يقفل
+  if (!opts.force) {
+    const st = await env.DB.prepare("SELECT status, at FROM emp_state WHERE emp = ?").bind(emp).first();
+    if (st && st.status === "working" && Date.now() - (st.at || 0) < 20 * 60e3) { await log(env, emp, "wake_queued", {}); return { ok: true, queued: true }; }
+  }
   const cap = Number(await getSetting(env, "fire_cap", 60));
   // رمز مؤقت للجلسة (٣ ساعات، لهالموظف بس): الموظف ما يحتاج سر ثابت في بيئته
   const tok = [...crypto.getRandomValues(new Uint8Array(24))].map((b) => b.toString(16).padStart(2, "0")).join("");

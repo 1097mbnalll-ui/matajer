@@ -56,7 +56,9 @@ export default {
       if (m % 15 < 5) await runNoon(env); // نون كل ١٥ دقيقة
       // تقرير الصباح: الساعة ٧ بتوقيت الرياض، مرة وحدة باليوم
       const riyadh = new Date((event.scheduledTime || Date.now()) + 3 * 3600e3);
-      if (riyadh.getUTCHours() === 7 && (await bump(env, "morning_report", 1))) await wake(env, "morning", "حان وقت تقرير الصباح. اقرأ بيانات أمس واليوم من المتجر وأرسل التقرير.");
+      // توفير: آخر اليوم نصوّر أرقام اليوم، والصبح الخادم نفسه يكتب التقرير (بدون جلسة ذكاء اصطناعي)
+      if (riyadh.getUTCHours() === 23 && riyadh.getUTCMinutes() >= 50) await snapshotDay(env, riyadh.toISOString().slice(0, 10));
+      if (riyadh.getUTCHours() === 7 && (await bump(env, "morning_report", 1))) await morningReport(env, new Date(riyadh - 864e5).toISOString().slice(0, 10));
     })().catch(() => {}));
   },
   async fetch(request, env, ctx) {
@@ -230,7 +232,8 @@ async function ownerApi(request, env, path, url) {
     const text = clip(body.text, 2000).trim();
     if (!text) return json(400, { ok: false, code: "empty" });
     await env.DB.prepare("INSERT INTO meeting_lines (meeting, at, emp, text) VALUES (?, ?, 'owner', ?)").bind(m.id, now(), text).run();
-    if (m.status === "open") await wake(env, "manager", `المالك علّق في الاجتماع رقم ${m.id} (${m.topic}):\n${text}\nخذ تعليقه بالاعتبار وكمّل الاجتماع.`);
+    const lastWake = await env.DB.prepare("SELECT at FROM logs WHERE emp = 'manager' AND act = 'woke' ORDER BY id DESC LIMIT 1").first();
+    if (m.status === "open" && !(lastWake && now() - lastWake.at < 10 * 60e3)) await wake(env, "manager", `المالك علّق في الاجتماع رقم ${m.id} (${m.topic}):\n${text}\nخذ تعليقه بالاعتبار وكمّل الاجتماع.`);
     return json(200, { ok: true });
   }
   if (path === "/api/replies-seen") {
@@ -349,6 +352,36 @@ async function ownerApi(request, env, path, url) {
   return json(404, { ok: false, code: "not_found" });
 }
 
+// ---------- تقرير الصباح بدون ذكاء اصطناعي ----------
+async function snapshotDay(env, day) {
+  if (await getSetting(env, "snap:" + day)) return;
+  const r = await storeCall(env, "/admin/today");
+  if (r.ok) await setSetting(env, "snap:" + day, { today: r.body.today, lastWeek: r.body.lastWeek, at: now() });
+}
+const sar = (n) => `${Number(n || 0).toLocaleString("ar-SA", { maximumFractionDigits: 2 })} ر.س`;
+export async function morningReport(env, yday) {
+  const snap = await getSetting(env, "snap:" + yday);
+  const cash = await storeCall(env, "/admin/cash");
+  const late = await storeCall(env, "/admin/alerts");
+  const open = (await env.DB.prepare("SELECT level, title FROM alerts WHERE open = 1 ORDER BY CASE level WHEN 'urgent' THEN 0 ELSE 1 END LIMIT 5").all()).results || [];
+  const L = [];
+  if (snap) {
+    const d = snap.today, w = snap.lastWeek || {};
+    const chg = w.revenue ? Math.round((d.revenue - w.revenue) / w.revenue * 100) : null;
+    L.push(`أمس: ${d.orders} طلب · ${sar(d.revenue)}${chg != null ? ` (${chg >= 0 ? "+" : ""}${chg}٪ عن نفس اليوم الأسبوع اللي طاف)` : ""}`);
+    if (d.cost > 0) L.push(`الربح التقريبي: ${sar(d.revenue - d.cost)}`);
+    if (d.canceled) L.push(`ملغي: ${d.canceled}`);
+  } else L.push("أرقام أمس ما انحفظت (المكتب ما قدر يقرأ المتجر آخر الليل).");
+  if (cash.ok && cash.body.balance > 0) L.push(`كاش عند المناديب: ${sar(cash.body.balance)}`);
+  if (late.ok && (late.body.orders || []).length) L.push(`طلبات متأخرة الحين: ${late.body.orders.length}`);
+  if (open.length) L.push("تنبيهات مفتوحة: " + open.map((a) => a.title).join(" · "));
+  const text = L.join("\n");
+  await tg(env, `📊 تقرير الصباح (ناصر)\n${text}`);
+  await addMsg(env, "morning", "emp", text, "report");
+  await log(env, "morning", "morning_report", { auto: true });
+  return text;
+}
+
 async function giveTask(env, emp, text, src, before, shown) {
   const r = await env.DB.prepare("INSERT INTO tasks (at, emp, text, src) VALUES (?, ?, ?, ?) RETURNING id").bind(now(), emp, text, src).first();
   if (before) await before(r.id);
@@ -370,7 +403,7 @@ async function decide(env, id, yes, how) {
   await env.DB.prepare("UPDATE requests SET status = ?, decided = ?, how = ? WHERE id = ? AND status = 'pending'").bind(st, now(), how, id).run();
   await log(env, r.emp, yes ? "approved_by_owner" : "rejected_by_owner", { id, title: r.title, how });
   await addMsg(env, r.emp, "sys", `${yes ? "✓ وافقت على" : "✕ رفضت"}: ${r.title}`, "text", id);
-  await wake(env, r.emp, `المالك ${yes ? "وافق على" : "رفض"} طلبك رقم ${id}: ${r.title}`);
+  // توفير: ما نصحّي الموظف عشان يعرف القرار؛ يشوفه في brief أول ما يشتغل
   return [200, { ok: true, status: st }];
 }
 
@@ -394,9 +427,10 @@ async function agentApi(request, env, path, url) {
     const mine = (await env.DB.prepare("SELECT id, title, status, decided FROM requests WHERE emp = ? ORDER BY id DESC LIMIT 20").bind(emp).all()).results || [];
     const alerts = (await env.DB.prepare("SELECT id, level, title, body, first FROM alerts WHERE open = 1 ORDER BY id DESC LIMIT 30").all()).results || [];
     const meetings = (await env.DB.prepare("SELECT id, topic, by, status FROM meetings WHERE status = 'open' ORDER BY id").all()).results || [];
-    const recent = (await env.DB.prepare("SELECT at, act, info FROM logs WHERE emp = ? ORDER BY id DESC LIMIT 30").bind(emp).all()).results || [];
+    const recent = (await env.DB.prepare("SELECT at, act FROM logs WHERE emp = ? AND act NOT IN ('woke','task_received','wake_queued','read_store','read_noon') ORDER BY id DESC LIMIT 8").bind(emp).all()).results || [];
     const instructions = `${AGENT_TEXT.common || ""}\n\n${AGENT_TEXT[emp] || ""}`;
-    return json(200, { ok: true, instructions, me: TEAM.find((t) => t.key === emp), perms: await permsOf(env, emp), areas: AREAS, tasks, requests: mine, alerts, meetings, recent, team: TEAM.map((t) => t.key) });
+    const me = TEAM.find((t) => t.key === emp);
+    return json(200, { ok: true, instructions, me: { key: me.key, person: me.person, name: me.name }, perms: await permsOf(env, emp), tasks, requests: mine.slice(0, 8), alerts: alerts.slice(0, 10), meetings, recent });
   }
   if (path === "/agent/status") {
     const st = ["idle", "working", "meeting"].includes(body.status) ? body.status : "idle";

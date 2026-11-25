@@ -168,7 +168,7 @@ test("تشغيل الجلسة يرسل الرؤوس الصحيحة، ويوقف 
   assert.equal(f.u, "https://api.anthropic.com/v1/claude_code/routines/trig_man/fire");
   assert.equal(f.headers.Authorization, "Bearer tok_man");
   assert.equal(f.headers["anthropic-beta"], "experimental-cc-routine-2026-04-01");
-  const r2 = await call(env, "/api/task", { cookie: c, body: { emp: "manager", text: "ثاني" } });
+  const r2 = await call(env, "/api/task", { cookie: c, body: { emp: "monitor", text: "ثاني" } });
   assert.equal(r2.body.wakeCode, "daily_cap");
   // موظف ما انربط له تشغيل: المهمة تنحفظ وما يطيح شي
   assert.equal((await call(env, "/api/task", { cookie: c, body: { emp: "assistant", text: "x" } })).body.wakeCode, "not_configured");
@@ -246,13 +246,26 @@ test("الموظفين يقرون المتجر عن طريق المكتب (قر�
   assert.match(env.sent.at(-1).text, /تقرير الصباح/);
 });
 
-test("المؤقت: تقرير الصباح الساعة ٧ بتوقيت الرياض مرة وحدة باليوم", async () => {
-  const env = makeEnv(); env.ROUTINE_MORNING_ID = "trig_mor"; env.ROUTINE_MORNING_TOKEN = "tok_mor";
+test("المؤقت: تقرير الصباح الساعة ٧ يكتبه الخادم (بدون جلسة) مرة وحدة باليوم", async () => {
+  const env = makeEnv({ drivers: [{ id: "d1", name: "سالم", balance: 120 }] }); env.ROUTINE_MORNING_ID = "trig_mor"; env.ROUTINE_MORNING_TOKEN = "tok_mor";
   const run = async (iso) => { const p = []; await worker.scheduled({ scheduledTime: Date.parse(iso) }, env, { waitUntil: (x) => p.push(x) }); await Promise.all(p); };
   await run("2026-11-26T04:00:00Z"); // ٧:٠٠ الرياض
   await run("2026-11-26T04:05:00Z");
   await run("2026-11-26T05:00:00Z");
-  assert.equal(env.fired.filter((f) => f.u.includes("trig_mor")).length, 1);
+  assert.equal(env.fired.filter((f) => f.u.includes("trig_mor")).length, 0, "ما يفتح جلسة");
+  assert.equal(env.sent.filter((m) => m.text.includes("تقرير الصباح")).length, 1);
+});
+
+test("توفير: ما نفتح جلسة ثانية لموظف شغّال، ولا نصحّيه عشان القرار", async () => {
+  const env = makeEnv();
+  const c = await login(env);
+  await call(env, "/api/task", { cookie: c, body: { emp: "manager", text: "1" } });
+  const r2 = await call(env, "/api/task", { cookie: c, body: { emp: "manager", text: "2" } });
+  assert.equal(env.fired.filter((f) => f.u.includes("trig_man")).length, 1, "المهمة الثانية تنتظره");
+  assert.equal(r2.body.woke, true);
+  const id = (await A(env, "/agent/request", { emp: "manager", area: "prices", title: "x" })).body.id;
+  await call(env, "/api/decide", { cookie: c, body: { id, yes: true } });
+  assert.equal(env.fired.filter((f) => f.u.includes("trig_man")).length, 1);
 });
 
 test("ربط الجلسة من الموقع: الرمز ينحفظ وما يرجع، وبعدها الموظف يصحى", async () => {
@@ -463,8 +476,8 @@ test("الاستهلاك: يعد الجلسات الفعلية اليوم ولك
   const env = makeEnv();
   const c = await login(env);
   await call(env, "/api/task", { cookie: c, body: { emp: "manager", text: "1" } });
-  await call(env, "/api/task", { cookie: c, body: { emp: "manager", text: "2" } });
+  await call(env, "/api/task", { cookie: c, body: { emp: "ideas", text: "2" } });
   await call(env, "/api/task", { cookie: c, body: { emp: "monitor", text: "3" } });
   const u = (await call(env, "/api/usage", { cookie: c })).body;
-  assert.equal(u.today.sessions, 3); assert.equal(u.today.by.manager, 2); assert.equal(u.today.usd, 1.05);
+  assert.equal(u.today.sessions, 3); assert.equal(u.today.by.manager, 1); assert.equal(u.today.usd, 1.05);
 });
