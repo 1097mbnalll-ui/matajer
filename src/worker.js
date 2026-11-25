@@ -6,6 +6,7 @@
 import { TEAM, AREAS, LEVELS, teamKeys, areaOf } from "./team.js";
 import { ensureSchema, now, log, getSetting, setSetting, permsOf, bump, teamState, hydrate, CFG_KEYS } from "./db.js";
 import { tg, wake, ownerChat, tgHookSecret, routineOf } from "./notify.js";
+import ASSETS from "./assets.js";
 import { runMonitor, analysisPrompt, DEFAULT_RULES, storeCall } from "./monitor.js";
 
 const SESSION_DAYS = 30, MAX_FAILS = 5, LOCK_MIN = 15;
@@ -65,9 +66,11 @@ async function route(request, env, ctx) {
   if (path === "/tg") return telegram(request, env);
   if (path.startsWith("/agent/")) return agentApi(request, env, path, url);
   if (path.startsWith("/api/")) return ownerApi(request, env, path, url);
-  // الملفات الثابتة (الواجهة)
+  // الواجهة (مدموجة في الخادم)
   if (env.ASSETS) return env.ASSETS.fetch(request);
-  return new Response("not found", { status: 404 });
+  const a = ASSETS[path] || ASSETS[path + ".html"];
+  if (!a || request.method !== "GET") return new Response("not found", { status: 404 });
+  return new Response(a.body, { headers: { "Content-Type": a.type, "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer" } });
 }
 
 // ================= المالك =================

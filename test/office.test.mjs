@@ -322,3 +322,12 @@ test("رمز الجلسة المؤقت: يجي مع التشغيل، يشتغل 
   assert.equal((await as("manager")).body.code, "token_for_other_employee");
   assert.equal((await as("ideas", "f".repeat(48))).status, 401);
 });
+
+test("الواجهة مدموجة في الخادم وتنفتح بدون ملفات منفصلة", async () => {
+  const env = makeEnv();
+  const r = await worker.fetch(new Request(BASE + "/"), env, ctx);
+  assert.equal(r.status, 200);
+  assert.match(await r.text(), /مكتب متاجر أحد/);
+  assert.match((await worker.fetch(new Request(BASE + "/app.js"), env, ctx)).headers.get("Content-Type"), /javascript/);
+  assert.equal((await worker.fetch(new Request(BASE + "/nothing"), env, ctx)).status, 404);
+});
