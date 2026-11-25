@@ -67,7 +67,7 @@ export async function collect(env, opts = {}) {
     checked.add("out");
     const low = st.body.low || {};
     const out = Object.entries(low).filter(([, q]) => Number(q) < rules.lowStockMin).map(([id]) => id);
-    if (out.length) found.push({ k: `out:${out.slice().sort().join(",").slice(0, 300)}`, level: "important", title: `${out.length} منتج خلص من المخزون`, body: `أمثلة: ${out.slice(0, 5).join("، ")}` });
+    if (out.length) found.push({ k: "out:all", level: "important", title: `${out.length} منتج خلص من المخزون`, body: `أمثلة: ${out.slice(0, 5).join("، ")}` });
   }
 
   // ٤) كاش مندوب عالي
@@ -105,7 +105,7 @@ export async function runMonitor(env, opts = {}) {
   const t = now(), fresh = [];
   for (const a of found) {
     const ex = await env.DB.prepare("SELECT id, open FROM alerts WHERE k = ?").bind(a.k).first();
-    if (ex && ex.open) { await env.DB.prepare("UPDATE alerts SET last = ? WHERE id = ?").bind(t, ex.id).run(); continue; }
+    if (ex && ex.open) { await env.DB.prepare("UPDATE alerts SET last = ?, title = ?, body = ? WHERE id = ?").bind(t, a.title, a.body, ex.id).run(); continue; }
     if (ex) await env.DB.prepare("UPDATE alerts SET open = 1, first = ?, last = ?, level = ?, title = ?, body = ? WHERE id = ?").bind(t, t, a.level, a.title, a.body, ex.id).run();
     else await env.DB.prepare("INSERT INTO alerts (k, level, title, body, first, last) VALUES (?, ?, ?, ?, ?, ?)").bind(a.k, a.level, a.title, a.body, t, t).run();
     const row = await env.DB.prepare("SELECT id FROM alerts WHERE k = ?").bind(a.k).first();
