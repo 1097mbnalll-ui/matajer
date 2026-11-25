@@ -14,7 +14,7 @@
 |---|---|---|
 | **المدير العام** | الوحيد اللي يكلم المالك. يوزّع الشغل، يدير الاجتماعات، يرفع القرارات والخلاصات | مرحلة ١ |
 | **المراقب** | يتابع المتجر ويكتشف المشاكل (طلب متأخر، منتج خلص، الموقع وقف، كاش مندوب عالي، سعر أقل من التكلفة) | مرحلة ١ |
-| **محلل الصباح** | تقرير يومي: مبيعات، ربح، مخزون | مرحلة ٢ |
+| **محلل الصباح** | تقرير يومي الساعة ٧ الصبح (الرياض): مبيعات، ربح، مخزون، كاش | جاهز (كود) |
 | **مسؤول الأسعار والعروض** | يقارن ملفات إكسل ويجهز التعديلات | مرحلة ٣ |
 | **مسؤول نون** | يدير متجر متاجر أحد على نون (عن طريق noon API) | طلب المالك ٢٥ نوفمبر ٢٠٢٦: يتقدّم |
 | **مطوّر الأفكار** | قناة خاصة بين المالك وبينه بس: يستلم أفكار المالك، يطوّرها ويصلحها ويضبطها | جديد (٢٥ نوفمبر ٢٠٢٦) |
@@ -87,13 +87,16 @@ wrangler.toml     إعداد Cloudflare بدون أسرار
 ```
 
 ### واجهة الموظفين (`/agent/*`، `Authorization: Bearer AGENT_TOKEN`)
-`brief` `status` `log` `tell` (المدير والأفكار والمساعد بس) `task-done` `assign` (المدير) `meeting-open` `meeting-invite` (المدير) `meeting-say` `meeting-read` `meeting-close` (المدير) `request` `request-status` `alert-done`.
+`brief` `status` `log` `store` (قراءة المتجر: alerts/stock/today/cash) `report` (المحلل بس) `tell` (المدير والأفكار والمساعد بس) `task-done` `assign` (المدير) `meeting-open` `meeting-invite` (المدير) `meeting-say` `meeting-read` `meeting-close` (المدير) `request` `request-status` `alert-done`.
 
 ### الأسرار (Cloudflare Secrets، ما تنحط في الكود)
-`OFFICE_PASSWORD` `SECRET` `AGENT_TOKEN` `TELEGRAM_BOT_TOKEN` `TELEGRAM_CHAT_ID` `TG_WEBHOOK_SECRET` `STORE_READER_USER` `STORE_READER_PASSWORD` و`ROUTINE_<KEY>_TOKEN` لكل موظف. ومتغيرات عادية: `ROUTINE_<KEY>_ID` (KEY = MANAGER, MONITOR, MORNING, PRICING, NOON, IDEAS, ASSISTANT)، `STORE_API`، `STORE_ORIGIN`، `STORE_DATA_URL`.
+أربعة بس: `OFFICE_PASSWORD` `AGENT_TOKEN` `TELEGRAM_BOT_TOKEN` `STORE_READER_PIN`. متغيرات عادية في `wrangler.toml`: `STORE_API` `STORE_ORIGIN` `STORE_DATA_URL`.
+- محادثة تيليقرام: زر «اربط تيليقرام» في الإعدادات (`/api/tg-setup`) يحفظ رقم المحادثة ويركّب الـ webhook. سر الـ webhook مشتق من رمز البوت (`tgHookSecret`).
+- ربط جلسة كل موظف: من الموقع («ربط الجلسة»، `/api/routine`): رقم المهمة والرمز ينحفظون في D1 الخاصة وما يرجع الرمز للمتصفح. (أو `ROUTINE_<KEY>_ID/_TOKEN` في Cloudflare، ولها الأولوية.)
+- دليل المالك خطوة بخطوة: `SETUP.md`.
 
 ### خطوات التشغيل (لما يقول المالك «نزّله»)
-1. دور «قارئ المكتب» في خادم المتجر (فرع في `super`): دور `reader` في `staffMay` يقرأ بس `/admin/{alerts,stock,cash,today,stats}`، ويشوف التكاليف، وتعديل قيد `CHECK(role IN ...)` في `staff_users`. المكتب يدخل بـ `/staff/login` ويرسل `Origin` من `STORE_ORIGIN`.
+1. دور «قارئ المكتب» في خادم المتجر (فرع في `super`): دور `reader` في `staffMay` يقرأ بس `/admin/{alerts,stock,cash,today,stats}`، ويشوف التكاليف، وتعديل قيد `CHECK(role IN ...)` في `staff_users`. **جاهز في فرع `office-reader` في super (مختبر، ما نزل).** المالك ينشئ الحساب من «حسابات لوحة الإدارة» برقم ١٢ رقم، والمكتب يدخل بـ `/enter` ويرفض أي حساب غير `reader`، ويرسل `Origin` من `STORE_ORIGIN`.
 2. قاعدة D1 اسمها `ohod-office` وحط رقمها في `wrangler.toml`.
 3. بوت تيليقرام جديد من BotFather، وربط webhook على `/tg` مع `secret_token`.
 4. لكل موظف مهمة مجدولة في claude.ai/code/routines على مستودع `matajer`، وبرومبت: «اقرأ agents/common.md وagents/<دور>.md ونفّذ»، و API trigger (الرمز يروح كسر للخادم).
@@ -104,4 +107,5 @@ wrangler.toml     إعداد Cloudflare بدون أسرار
 
 ## ٧) سجل التغييرات
 - ٢٥ نوفمبر ٢٠٢٦: إنشاء المشروع وتوثيق القرارات الأولى.
+- ٢٥ نوفمبر ٢٠٢٦: «سو كل شي»: فرع `office-reader` في super (دور قارئ المكتب + اختبار، كل اختبارات المتجر نجحت)، تقرير الصباح، قراءة المتجر عن طريق المكتب، ربط تيليقرام والجلسات من الموقع، `SETUP.md`. ١٨ اختبار ناجح. **ما نزل شي.**
 - ٢٥ نوفمبر ٢٠٢٦: المرحلة ١ (كود فقط، **ما نزل**): خادم المكتب، الدخول، الصلاحيات، الموافقات، الاجتماعات، تيليقرام، المراقب على Cron، شكل المكتب، تعليمات الموظفين. ١٣ اختبار ناجح.

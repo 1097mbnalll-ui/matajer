@@ -5,8 +5,8 @@
 // - scheduled: المراقب كل ٥ دقايق
 import { TEAM, AREAS, LEVELS, teamKeys, areaOf } from "./team.js";
 import { ensureSchema, now, log, getSetting, setSetting, permsOf, bump, teamState } from "./db.js";
-import { tg, wake } from "./notify.js";
-import { runMonitor, analysisPrompt, DEFAULT_RULES } from "./monitor.js";
+import { tg, wake, ownerChat, tgHookSecret, routineOf } from "./notify.js";
+import { runMonitor, analysisPrompt, DEFAULT_RULES, storeCall } from "./monitor.js";
 
 const SESSION_DAYS = 30, MAX_FAILS = 5, LOCK_MIN = 15;
 const enc = new TextEncoder();
@@ -31,6 +31,9 @@ export default {
       await ensureSchema(env);
       const m = new Date(event.scheduledTime || Date.now()).getUTCMinutes();
       await runMonitor(env, { hourly: m < 5 });
+      // تقرير الصباح: الساعة ٧ بتوقيت الرياض، مرة وحدة باليوم
+      const riyadh = new Date((event.scheduledTime || Date.now()) + 3 * 3600e3);
+      if (riyadh.getUTCHours() === 7 && (await bump(env, "morning_report", 1))) await wake(env, "morning", "حان وقت تقرير الصباح. اقرأ بيانات أمس واليوم من المتجر وأرسل التقرير.");
     })().catch(() => {}));
   },
   async fetch(request, env, ctx) {
@@ -84,10 +87,10 @@ async function ownerApi(request, env, path, url) {
   const ip = request.headers.get("CF-Connecting-IP") || "local";
 
   if (path === "/api/login") {
-    if (!env.OFFICE_PASSWORD || !env.SECRET) return json(500, { ok: false, code: "config" });
+    if (!env.OFFICE_PASSWORD) return json(500, { ok: false, code: "config" });
     const f = await env.DB.prepare("SELECT n, until FROM fails WHERE ip = ?").bind(ip).first();
     if (f && f.until > now()) return json(429, { ok: false, code: "locked", minutes: Math.ceil((f.until - now()) / 60000) });
-    const ok = sameText(await hmac(env.SECRET, clip(body.password, 200)), await hmac(env.SECRET, env.OFFICE_PASSWORD));
+    const ok = sameText(await hmac("ohod-office-login", clip(body.password, 200)), await hmac("ohod-office-login", env.OFFICE_PASSWORD));
     if (!ok) {
       const n = (f && f.until <= now() && f.n >= MAX_FAILS ? 0 : f?.n || 0) + 1;
       const until = n >= MAX_FAILS ? now() + LOCK_MIN * 60000 : 0;
@@ -112,7 +115,9 @@ async function ownerApi(request, env, path, url) {
     const pending = (await env.DB.prepare("SELECT * FROM requests WHERE status = 'pending' ORDER BY id DESC").all()).results || [];
     const alerts = (await env.DB.prepare("SELECT * FROM alerts WHERE open = 1 ORDER BY CASE level WHEN 'urgent' THEN 0 WHEN 'important' THEN 1 ELSE 2 END, id DESC LIMIT 50").all()).results || [];
     const meetings = (await env.DB.prepare("SELECT * FROM meetings ORDER BY id DESC LIMIT 10").all()).results || [];
-    return json(200, { ok: true, team: await teamState(env), areas: AREAS, levels: LEVELS, pending, alerts, meetings,
+    const team = await teamState(env);
+    for (const t of team) { const r = await routineOf(env, t.key); t.linked = !!(r.id && r.token); }
+    return json(200, { ok: true, team, telegram: { bot: !!env.TELEGRAM_BOT_TOKEN, linked: !!(await ownerChat(env)) }, areas: AREAS, levels: LEVELS, pending, alerts, meetings,
       rules: { ...DEFAULT_RULES, ...(await getSetting(env, "rules", {})) }, caps: { fire: await getSetting(env, "fire_cap", 60), meetings: await getSetting(env, "meeting_cap", 5) } });
   }
   if (path === "/api/log") {
@@ -151,6 +156,28 @@ async function ownerApi(request, env, path, url) {
     if (body.meetingCap != null) await setSetting(env, "meeting_cap", Math.max(0, Math.min(50, Number(body.meetingCap) || 0)));
     await log(env, "manager", "rules_changed", { by: "المالك" });
     return json(200, { ok: true, rules: r });
+  }
+  if (path === "/api/routine") { // ربط جلسة موظف: الرمز ينحفظ وما يرجع للمتصفح أبداً
+    if (!teamKeys.has(body.emp)) return json(400, { ok: false, code: "bad_emp" });
+    const id = clip(body.id, 100).trim(), token = clip(body.token, 500).trim();
+    if (body.clear) { await env.DB.prepare("DELETE FROM settings WHERE k = ?").bind("routine:" + body.emp).run(); await log(env, body.emp, "routine_unlinked", { by: "المالك" }); return json(200, { ok: true }); }
+    if (!/^[A-Za-z0-9_-]{4,100}$/.test(id) || token.length < 10) return json(400, { ok: false, code: "bad_routine" });
+    await setSetting(env, "routine:" + body.emp, { id, token });
+    await log(env, body.emp, "routine_linked", { by: "المالك" });
+    return json(200, { ok: true });
+  }
+  if (path === "/api/tg-setup") { // المالك يرسل أي رسالة للبوت، وبعدها يضغط «اربط تيليقرام»
+    if (!env.TELEGRAM_BOT_TOKEN) return json(400, { ok: false, code: "no_bot" });
+    const f = env.fetch || fetch, base = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}`;
+    await f(`${base}/deleteWebhook`, { method: "POST" }).catch(() => {});
+    const up = await (await f(`${base}/getUpdates?limit=50`)).json().catch(() => ({}));
+    const priv = (up.result || []).map((u) => u.message).filter((m) => m && m.chat && m.chat.type === "private").pop();
+    if (!priv) return json(400, { ok: false, code: "send_message_first" });
+    await setSetting(env, "tg_chat", String(priv.chat.id));
+    const hook = await (await f(`${base}/setWebhook`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: `${url.origin}/tg`, secret_token: await tgHookSecret(env), allowed_updates: ["message", "callback_query"] }) })).json().catch(() => ({}));
+    await tg(env, "✅ انربط تيليقرام بمكتب متاجر أحد. من هنا بتوصلك التنبيهات والموافقات.");
+    return json(200, { ok: !!hook.ok, name: priv.chat.first_name || "" });
   }
   if (path === "/api/analyze") {
     const a = await env.DB.prepare("SELECT * FROM alerts WHERE id = ?").bind(Number(body.id)).first();
@@ -301,6 +328,23 @@ async function agentApi(request, env, path, url) {
     const r = await env.DB.prepare("SELECT id, status, decided, how FROM requests WHERE id = ? AND emp = ?").bind(Number(body.id ?? url.searchParams.get("id")), emp).first();
     return r ? json(200, { ok: true, ...r }) : json(404, { ok: false });
   }
+  // قراءة بيانات المتجر عن طريق المكتب (حساب «قارئ المكتب»، قراءة بس)
+  if (path === "/agent/store") {
+    const allowed = ["/admin/alerts", "/admin/stock", "/admin/today", "/admin/cash"];
+    if (!allowed.includes(body.path)) return json(400, { ok: false, code: "path_not_allowed", allowed });
+    const q = body.path === "/admin/stock" ? (body.summary ? { summary: true } : Array.isArray(body.ids) ? { ids: body.ids.slice(0, 500).map(String) } : {}) : {};
+    const r = await storeCall(env, body.path, q);
+    await log(env, emp, "read_store", { path: body.path, ok: r.ok });
+    return json(r.ok ? 200 : 502, { ok: r.ok, status: r.status, data: r.body });
+  }
+  if (path === "/agent/report") { // تقرير الصباح يوصل للمالك مباشرة
+    if (emp !== "morning") return json(403, { ok: false, code: "morning_only" });
+    const text = clip(body.text, 3800).trim();
+    if (!text) return json(400, { ok: false, code: "empty" });
+    await tg(env, `📊 تقرير الصباح\n${text}`);
+    await log(env, emp, "morning_report", { len: text.length });
+    return json(200, { ok: true });
+  }
   if (path === "/agent/alert-done") {
     await env.DB.prepare("UPDATE alerts SET open = 0 WHERE id = ?").bind(Number(body.id)).run();
     await log(env, emp, "alert_closed", { id: Number(body.id), note: clip(body.note, 300) });
@@ -311,9 +355,9 @@ async function agentApi(request, env, path, url) {
 
 // ================= تيليقرام =================
 async function telegram(request, env) {
-  if (!env.TG_WEBHOOK_SECRET || !sameText(request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "", env.TG_WEBHOOK_SECRET)) return json(401, { ok: false });
+  if (!env.TELEGRAM_BOT_TOKEN || !sameText(request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "", await tgHookSecret(env))) return json(401, { ok: false });
   const u = await request.json().catch(() => ({}));
-  const owner = String(env.TELEGRAM_CHAT_ID || "");
+  const owner = (await ownerChat(env)) || "__none__";
   const answer = async (id, text) => { if (env.TELEGRAM_BOT_TOKEN) await (env.fetch || fetch)(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callback_query_id: id, text }) }).catch(() => {}); };
 
   if (u.callback_query) {

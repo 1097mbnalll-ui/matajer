@@ -8,7 +8,8 @@ const ACT_NAME = {
   woke: "بدأ جلسة شغل", wake_skipped: "ما اشتغل (ما انربط أو وصل السقف)", wake_failed: "فشل تشغيل الجلسة", alert: "طلّع تنبيه", solved: "انحلّت مشكلة",
   task_received: "استلم مهمة", task_done: "خلّص مهمة", asked_approval: "طلب موافقتك", auto_approved: "نفّذ تعديل بسيط", approved_by_owner: "وافقت على طلبه",
   rejected_by_owner: "رفضت طلبه", meeting_opened: "فتح اجتماع", meeting_closed: "قفل اجتماع", told_owner: "كلّمك", perm_changed: "تغيّرت صلاحياته",
-  rules_changed: "تغيّرت الإعدادات", alert_closed: "قفل تنبيه",
+  rules_changed: "تغيّرت الإعدادات", alert_closed: "قفل تنبيه", routine_linked: "انربطت جلسته", routine_unlinked: "انفصلت جلسته",
+  read_store: "قرأ بيانات المتجر", morning_report: "أرسل تقرير الصباح",
 };
 let S = null;
 
@@ -108,6 +109,12 @@ async function openEmp(key) {
     <h3>أعطه شغلة</h3><textarea id="taskText" placeholder="${key === "ideas" ? "اكتب فكرتك…" : "وش تبيه يسوي؟"}"></textarea>
     <div class="btns"><button class="btn primary" data-send="${key}">أرسل</button></div>
     ${tasks ? `<h3>آخر المهام</h3>${tasks}` : ""}
+    <h3>ربط الجلسة ${t.linked ? "✅" : "⚪️"}</h3>
+    <p class="muted" style="margin:0 0 8px;font-size:13px">${t.linked ? "مربوط: المكتب يقدر يصحّيه." : "من claude.ai/code/routines: افتح مهمته، أضف API trigger، وانسخ الرقم والرمز هنا."}</p>
+    <details${t.linked ? "" : " open"}><summary class="muted">${t.linked ? "غيّر الربط" : "اربط الحين"}</summary>
+      <label class="field"><span>رقم المهمة (trig_…)</span><input id="rtId" dir="ltr" autocomplete="off"></label>
+      <label class="field"><span>الرمز (ينحفظ مخفي وما يظهر مرة ثانية)</span><input id="rtTok" type="password" dir="ltr" autocomplete="off"></label>
+      <div class="btns"><button class="btn primary" data-link="${key}">احفظ الربط</button>${t.linked ? `<button class="btn danger" data-unlink="${key}">افصل</button>` : ""}</div></details>
     <h3>بطاقة الصلاحيات</h3>${perms}
     <h3>السجل</h3>${log}`);
 }
@@ -133,11 +140,13 @@ function openSettings() {
       <option value="urgent" ${S.rules.wakeOn === "urgent" ? "selected" : ""}>العاجل بس</option><option value="important" ${S.rules.wakeOn === "important" ? "selected" : ""}>العاجل والمهم</option><option value="none" ${S.rules.wakeOn === "none" ? "selected" : ""}>ولا شي، بس لما أضغط «حلّلها»</option></select></label>
     <label class="field"><span>أقصى عدد جلسات باليوم (عشان حد اشتراك Max)</span><input id="fireCap" type="number" inputmode="numeric" value="${S.caps.fire}"></label>
     <label class="field"><span>أقصى عدد اجتماعات باليوم</span><input id="meetingCap" type="number" inputmode="numeric" value="${S.caps.meetings}"></label>
-    <div class="btns"><button class="btn primary" id="saveRules">احفظ</button><button class="btn danger" id="logout">خروج</button></div>`);
+    <div class="btns"><button class="btn primary" id="saveRules">احفظ</button><button class="btn danger" id="logout">خروج</button></div>
+    <h3>تيليقرام ${S.telegram.linked ? "✅ مربوط" : "⚪️ مو مربوط"}</h3>
+    ${S.telegram.bot ? `<p class="muted" style="font-size:13px">أرسل أي رسالة لبوت المكتب في تيليقرام، وبعدها اضغط الزر.</p><button class="btn" id="tgSetup">${S.telegram.linked ? "أعد الربط" : "اربط تيليقرام"}</button>` : `<p class="muted" style="font-size:13px">لازم يتحط رمز البوت في Cloudflare أول (TELEGRAM_BOT_TOKEN).</p>`}`);
 }
 
 document.addEventListener("click", async (e) => {
-  const el = e.target.closest("[data-close],[data-emp],[data-meet],[data-perm],[data-send],[data-yes],[data-no],[data-meeting],[data-analyze],#btnPending,#btnMeet,#btnSet,#saveRules,#logout");
+  const el = e.target.closest("[data-close],[data-emp],[data-meet],[data-perm],[data-send],[data-yes],[data-no],[data-meeting],[data-analyze],[data-link],[data-unlink],#tgSetup,#btnPending,#btnMeet,#btnSet,#saveRules,#logout");
   if (!el) return;
   const d = el.dataset;
   try {
@@ -164,6 +173,14 @@ document.addEventListener("click", async (e) => {
     } else if (el.id === "saveRules") {
       await api("/api/rules", { cashLimit: Number($("#cashLimit").value), wakeOn: $("#wakeOn").value, fireCap: Number($("#fireCap").value), meetingCap: Number($("#meetingCap").value) });
       toast("انحفظت"); closeSheet(); load();
+    } else if (d.link) {
+      const r = await api("/api/routine", { emp: d.link, id: $("#rtId").value.trim(), token: $("#rtTok").value.trim() });
+      toast(r.ok ? "انربط ✅" : "تأكد من الرقم والرمز"); if (r.ok) { await load(); openEmp(d.link); }
+    } else if (d.unlink) {
+      await api("/api/routine", { emp: d.unlink, clear: true }); toast("انفصل"); await load(); openEmp(d.unlink);
+    } else if (el.id === "tgSetup") {
+      const r = await api("/api/tg-setup", {});
+      toast(r.ok ? "انربط تيليقرام ✅ شيك على البوت" : r.code === "send_message_first" ? "أرسل رسالة للبوت أول وبعدها اضغط" : "ما انربط، جرّب مرة ثانية"); if (r.ok) { await load(); openSettings(); }
     } else if (el.id === "logout") { await api("/api/logout", {}); closeSheet(); showLogin(); }
   } catch {}
 });

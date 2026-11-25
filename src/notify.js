@@ -3,9 +3,21 @@ import { bump, log, setSetting, getSetting } from "./db.js";
 
 const ICON = { urgent: "🔴 عاجل", important: "🟠 مهم", info: "🔵 للعلم" };
 
+// رقم محادثة المالك: من الإعداد أو من «اربط تيليقرام» في الموقع
+export async function ownerChat(env) {
+  if (env.TELEGRAM_CHAT_ID) return String(env.TELEGRAM_CHAT_ID);
+  if (!env.DB) return null;
+  const v = await getSetting(env, "tg_chat");
+  return v ? String(v) : null;
+}
+export async function tgHookSecret(env) {
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("ohod-office-tg:" + env.TELEGRAM_BOT_TOKEN));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 48);
+}
 export async function tg(env, text, buttons) {
-  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) return { ok: false, skipped: true };
-  const body = { chat_id: env.TELEGRAM_CHAT_ID, text: text.slice(0, 4000), disable_web_page_preview: true };
+  const chat = env.TELEGRAM_BOT_TOKEN ? await ownerChat(env) : null;
+  if (!chat) return { ok: false, skipped: true };
+  const body = { chat_id: chat, text: text.slice(0, 4000), disable_web_page_preview: true };
   if (buttons && buttons.length) body.reply_markup = { inline_keyboard: buttons };
   try {
     const r = await (env.fetch || fetch)(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
@@ -16,10 +28,14 @@ export async function tg(env, text, buttons) {
 }
 export const levelIcon = (l) => ICON[l] || ICON.info;
 
-// يصحّي موظف: ROUTINE_<KEY>_ID (متغير عادي) + ROUTINE_<KEY>_TOKEN (سر)
-export async function wake(env, emp, text) {
+// ربط جلسة الموظف: من «ربط الجلسة» في الموقع (يتخزن في قاعدة المكتب الخاصة)، أو ROUTINE_<KEY>_ID/_TOKEN في Cloudflare
+export async function routineOf(env, emp) {
   const K = emp.toUpperCase();
-  const id = env[`ROUTINE_${K}_ID`], token = env[`ROUTINE_${K}_TOKEN`];
+  const saved = (await getSetting(env, "routine:" + emp)) || {};
+  return { id: env[`ROUTINE_${K}_ID`] || saved.id || null, token: env[`ROUTINE_${K}_TOKEN`] || saved.token || null };
+}
+export async function wake(env, emp, text) {
+  const { id, token } = await routineOf(env, emp);
   if (!id || !token) { await log(env, emp, "wake_skipped", { why: "not_configured" }); return { ok: false, code: "not_configured" }; }
   const cap = Number(await getSetting(env, "fire_cap", 60));
   if (!(await bump(env, "fire", cap))) { await log(env, emp, "wake_skipped", { why: "daily_cap", cap }); return { ok: false, code: "daily_cap" }; }

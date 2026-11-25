@@ -19,5 +19,6 @@ crons = ["*/5 * * * *"]
 
 [vars]
 STORE_API = "https://ohod-admin.1097mbnalll.workers.dev"
-STORE_ORIGIN = ""
-STORE_DATA_URL = ""
+STORE_ORIGIN = "https://1097mbnalll-ui.github.io"
+# يتأكد منه وقت التشغيل (ما قدرت أفتحه من بيئة الجلسة)
+STORE_DATA_URL = "https://1097mbnalll-ui.github.io/super/data.json"

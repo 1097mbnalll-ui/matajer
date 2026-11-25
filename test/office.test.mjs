@@ -5,15 +5,16 @@ import { fakeD1 } from "./d1.mjs";
 import worker from "../src/worker.js";
 import { runMonitor } from "../src/monitor.js";
 import { TEAM } from "../src/team.js";
+import { tgHookSecret } from "../src/notify.js";
 
 const BASE = "https://office.test";
 function makeEnv(store = {}) {
   const sent = [], fired = [], storeCalls = [];
   const env = {
-    __fresh: true, DB: fakeD1(), OFFICE_PASSWORD: "كلمة-سر-تجريبية", SECRET: "s".repeat(32), AGENT_TOKEN: "agent-token-test",
-    TELEGRAM_BOT_TOKEN: "bot", TELEGRAM_CHAT_ID: "42", TG_WEBHOOK_SECRET: "hook",
+    __fresh: true, DB: fakeD1(), OFFICE_PASSWORD: "كلمة-سر-تجريبية", AGENT_TOKEN: "agent-token-test",
+    TELEGRAM_BOT_TOKEN: "bot", TELEGRAM_CHAT_ID: "42",
     STORE_API: "https://store.test", STORE_ORIGIN: "https://shop.test", STORE_DATA_URL: "https://shop.test/data.json",
-    STORE_READER_USER: "office-reader", STORE_READER_PASSWORD: "reader-password-123",
+    STORE_READER_PIN: "918273645501",
     ROUTINE_MONITOR_ID: "trig_mon", ROUTINE_MONITOR_TOKEN: "tok_mon", ROUTINE_MANAGER_ID: "trig_man", ROUTINE_MANAGER_TOKEN: "tok_man",
     ROUTINE_IDEAS_ID: "trig_ide", ROUTINE_IDEAS_TOKEN: "tok_ide",
     sent, fired, storeCalls, store,
@@ -31,7 +32,7 @@ function makeEnv(store = {}) {
       const p = u.slice("https://store.test".length);
       storeCalls.push({ p, body, origin: init.headers?.Origin });
       if (p === "/ping") return store.down ? new Response("x", { status: 502 }) : Response.json({ ok: true });
-      if (p === "/staff/login") return store.denied ? Response.json({ ok: false }, { status: 401 }) : Response.json({ ok: true, session: "a".repeat(64) });
+      if (p === "/enter") return store.denied ? Response.json({ ok: false }, { status: 401 }) : Response.json({ ok: true, go: "staff", token: "a".repeat(64), user: { role: store.role || "reader" } });
       if (store.denied) return Response.json({ ok: false, code: "session_expired" }, { status: 401 });
       if (p === "/admin/alerts") return Response.json({ ok: true, orders: store.late || [] });
       if (p === "/admin/stock") return Response.json(body.summary ? { ok: true, low: store.low || {} } : { ok: true, costs: store.costs || {} });
@@ -137,7 +138,8 @@ test("سقف الاجتماعات اليومي", async () => {
 test("المالك يوافق من تيليقرام، وغيره ما يقدر", async () => {
   const env = makeEnv();
   const id = (await A(env, "/agent/request", { emp: "pricing", area: "prices", title: "عرض" })).body.id;
-  const hook = (body, secret = "hook") => call(env, "/tg", { body, headers: { "X-Telegram-Bot-Api-Secret-Token": secret } });
+  const good = await tgHookSecret(env);
+  const hook = (body, secret = good) => call(env, "/tg", { body, headers: { "X-Telegram-Bot-Api-Secret-Token": secret } });
   assert.equal((await hook({}, "wrong")).status, 401);
   await hook({ callback_query: { id: "q", from: { id: 999 }, message: { chat: { id: 999 } }, data: `a:${id}:y` } });
   assert.equal((await A(env, "/agent/request-status", { emp: "pricing", id })).body.status, "pending");
@@ -223,4 +225,62 @@ test("المدير يدعو الكل للاجتماع، وكل واحد يقرأ
   assert.equal(r.body.lines.length, 1);
   assert.ok(!r.body.waitingFor.includes("monitor"));
   assert.ok(r.body.waitingFor.includes("noon"));
+});
+
+test("المراقب يرفض يستخدم أي حساب غير «قارئ المكتب» حتى لو الرقم صحيح", async () => {
+  const env = makeEnv({ role: "manager" });
+  await runMonitor(env);
+  assert.match(env.sent[0].text, /قارئ المكتب/);
+  assert.ok(!env.storeCalls.some((c) => c.p.startsWith("/admin")), "ما قرأ شي بحساب المدير");
+});
+
+test("الموظفين يقرون المتجر عن طريق المكتب (قراءة بس)، والمحلل يرسل تقرير الصباح", async () => {
+  const env = makeEnv({ drivers: [{ id: "d1", name: "سالم", balance: 20 }] });
+  const r = await A(env, "/agent/store", { emp: "morning", path: "/admin/cash" });
+  assert.equal(r.body.data.drivers[0].name, "سالم");
+  assert.equal((await A(env, "/agent/store", { emp: "morning", path: "/save" })).body.code, "path_not_allowed");
+  await A(env, "/agent/store", { emp: "morning", path: "/admin/cash", add: 50 });
+  assert.ok(env.storeCalls.filter((c) => c.p === "/admin/cash").every((c) => c.body.add === undefined), "ما يمرر أي تعديل");
+  assert.equal((await A(env, "/agent/report", { emp: "noon", text: "x" })).status, 403);
+  await A(env, "/agent/report", { emp: "morning", text: "المبيعات أمس ١٬٢٠٠ ر.س" });
+  assert.match(env.sent.at(-1).text, /تقرير الصباح/);
+});
+
+test("المؤقت: تقرير الصباح الساعة ٧ بتوقيت الرياض مرة وحدة باليوم", async () => {
+  const env = makeEnv(); env.ROUTINE_MORNING_ID = "trig_mor"; env.ROUTINE_MORNING_TOKEN = "tok_mor";
+  const run = async (iso) => { const p = []; await worker.scheduled({ scheduledTime: Date.parse(iso) }, env, { waitUntil: (x) => p.push(x) }); await Promise.all(p); };
+  await run("2026-11-26T04:00:00Z"); // ٧:٠٠ الرياض
+  await run("2026-11-26T04:05:00Z");
+  await run("2026-11-26T05:00:00Z");
+  assert.equal(env.fired.filter((f) => f.u.includes("trig_mor")).length, 1);
+});
+
+test("ربط الجلسة من الموقع: الرمز ينحفظ وما يرجع، وبعدها الموظف يصحى", async () => {
+  const env = makeEnv();
+  const c = await login(env);
+  assert.equal((await call(env, "/api/task", { cookie: c, body: { emp: "assistant", text: "x" } })).body.wakeCode, "not_configured");
+  assert.equal((await call(env, "/api/routine", { cookie: c, body: { emp: "assistant", id: "trig_ass", token: "short" } })).status, 400);
+  assert.equal((await call(env, "/api/routine", { cookie: c, body: { emp: "assistant", id: "trig_ass", token: "sk-routine-long-token" } })).status, 200);
+  const st = await call(env, "/api/state", { cookie: c });
+  assert.equal(st.body.team.find((t) => t.key === "assistant").linked, true);
+  assert.ok(!JSON.stringify(st.body).includes("sk-routine-long-token"), "الرمز ما يرجع للمتصفح");
+  assert.equal((await call(env, "/api/task", { cookie: c, body: { emp: "assistant", text: "رتب ملفاتي" } })).body.woke, true);
+  assert.equal(env.fired.at(-1).headers.Authorization, "Bearer sk-routine-long-token");
+});
+
+test("اربط تيليقرام: ياخذ محادثة المالك ويركّب الـ webhook بسر", async () => {
+  const env = makeEnv(); delete env.TELEGRAM_CHAT_ID;
+  const base = env.fetch, calls = [];
+  env.fetch = async (u, init = {}) => {
+    u = String(u); calls.push(u);
+    if (u.includes("/getUpdates")) return Response.json({ ok: true, result: [{ message: { chat: { id: 777, type: "private", first_name: "المالك" }, text: "هلا" } }] });
+    if (u.includes("/setWebhook")) { env.hookBody = JSON.parse(init.body); return Response.json({ ok: true }); }
+    return base(u, init);
+  };
+  const c = await login(env);
+  const r = await call(env, "/api/tg-setup", { cookie: c, body: {} });
+  assert.equal(r.body.ok, true);
+  assert.equal(env.hookBody.url, "https://office.test/tg");
+  assert.equal(env.hookBody.secret_token, await tgHookSecret(env));
+  assert.equal(env.sent.at(-1).chat_id, "777");
 });

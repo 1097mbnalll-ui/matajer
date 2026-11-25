@@ -1,5 +1,5 @@
 // المراقب: فحص المتجر كل ٥ دقايق على Cloudflare (بدون ذكاء اصطناعي)
-// يقرأ بس من خادم المتجر بحساب «قارئ المكتب»، وما يعدّل أي شي
+// يقرأ بس من خادم المتجر بحساب «قارئ المكتب» (دور reader في المتجر، يدخل برقمه من /enter)، وما يعدّل أي شي
 import { getSetting, setSetting, log, now, ensureSchema } from "./db.js";
 import { tg, wake, levelIcon } from "./notify.js";
 
@@ -7,12 +7,12 @@ export const DEFAULT_RULES = { cashLimit: 500, lowStockMin: 1, wakeOn: "urgent" 
 
 // ---------- الاتصال بخادم المتجر ----------
 async function storeLogin(env) {
-  const r = await storePost(env, "/staff/login", { username: env.STORE_READER_USER, password: env.STORE_READER_PASSWORD }, true);
-  if (!r.ok || !r.body.session) return null;
-  await setSetting(env, "store_session", { s: r.body.session, at: now() });
-  return r.body.session;
+  const r = await storePost(env, "/enter", { pin: env.STORE_READER_PIN });
+  if (!r.ok || !r.body.token || r.body.user?.role !== "reader") return null; // لازم يكون حساب «قارئ المكتب» بالذات
+  await setSetting(env, "store_session", { s: r.body.token, at: now() });
+  return r.body.token;
 }
-async function storePost(env, path, body, raw) {
+async function storePost(env, path, body) {
   const f = env.fetch || fetch;
   try {
     const res = await f(env.STORE_API.replace(/\/+$/, "") + path, {
@@ -45,7 +45,7 @@ export async function collect(env, opts = {}) {
   try { const r = await f(env.STORE_API.replace(/\/+$/, "") + "/ping"); up = r.ok; } catch { up = false; }
   if (!up) { found.push({ k: "down", level: "urgent", title: "خادم المتجر ما يرد", body: "الزبائن ممكن ما يقدرون يطلبون الحين." }); return { found, checked }; }
 
-  if (!env.STORE_READER_USER || !env.STORE_READER_PASSWORD) return { found, checked, note: "reader_not_configured" };
+  if (!env.STORE_READER_PIN) return { found, checked, note: "reader_not_configured" };
 
   // ٢) طلبات متأخرة (حدود المتجر نفسه)
   const al = await storeCall(env, "/admin/alerts");
