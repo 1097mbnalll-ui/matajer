@@ -259,13 +259,13 @@ test("ربط الجلسة من الموقع: الرمز ينحفظ وما يرج
   const env = makeEnv();
   const c = await login(env);
   assert.equal((await call(env, "/api/task", { cookie: c, body: { emp: "assistant", text: "x" } })).body.wakeCode, "not_configured");
-  assert.equal((await call(env, "/api/routine", { cookie: c, body: { emp: "assistant", id: "trig_ass", token: "short" } })).status, 400);
-  assert.equal((await call(env, "/api/routine", { cookie: c, body: { emp: "assistant", id: "trig_ass", token: "sk-routine-long-token" } })).status, 200);
+  assert.equal((await call(env, "/api/routine", { cookie: c, body: { emp: "assistant", id: "trig_assistant0001", token: "https://api.anthropic.com/x" } })).status, 400);
+  assert.equal((await call(env, "/api/routine", { cookie: c, body: { emp: "assistant", id: "trig_assistant0001", token: "sk-ant-oat01-routine-long-token" } })).status, 200);
   const st = await call(env, "/api/state", { cookie: c });
   assert.equal(st.body.team.find((t) => t.key === "assistant").linked, true);
-  assert.ok(!JSON.stringify(st.body).includes("sk-routine-long-token"), "الرمز ما يرجع للمتصفح");
+  assert.ok(!JSON.stringify(st.body).includes("sk-ant-oat01-routine-long-token"), "الرمز ما يرجع للمتصفح");
   assert.equal((await call(env, "/api/task", { cookie: c, body: { emp: "assistant", text: "رتب ملفاتي" } })).body.woke, true);
-  assert.equal(env.fired.at(-1).headers.Authorization, "Bearer sk-routine-long-token");
+  assert.equal(env.fired.at(-1).headers.Authorization, "Bearer sk-ant-oat01-routine-long-token");
 });
 
 test("اربط تيليقرام: ياخذ محادثة المالك ويركّب الـ webhook بسر", async () => {

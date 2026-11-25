@@ -240,7 +240,8 @@ async function ownerApi(request, env, path, url) {
     if (!teamKeys.has(body.emp)) return json(400, { ok: false, code: "bad_emp" });
     const id = clip(body.id, 100).trim(), token = clip(body.token, 500).trim();
     if (body.clear) { await env.DB.prepare("DELETE FROM settings WHERE k = ?").bind("routine:" + body.emp).run(); await log(env, body.emp, "routine_unlinked", { by: "المالك" }); return json(200, { ok: true }); }
-    if (!/^[A-Za-z0-9_-]{4,100}$/.test(id) || token.length < 10) return json(400, { ok: false, code: "bad_routine" });
+    if (!/^trig_[A-Za-z0-9]{10,60}$/.test(id)) return json(400, { ok: false, code: "bad_routine_id" });
+    if (!/^sk-ant-[A-Za-z0-9_-]{20,}$/.test(token)) return json(400, { ok: false, code: "bad_routine_token" }); // الرمز يبدأ بـ sk-ant- (مو رابط)
     await setSetting(env, "routine:" + body.emp, { id, token });
     await log(env, body.emp, "routine_linked", { by: "المالك" });
     return json(200, { ok: true });
