@@ -496,3 +496,12 @@ test("راكان (نون) ما يقرأ بيانات البقالة، ويشوف
   assert.deepEqual(m.body.alerts.map((a) => a.title), ["2106 منتج خلص"]);
   assert.match(b.body.instructions, /نون ≠ متاجر أحد/);
 });
+
+test("ضغطة مكررة: نفس الرسالة لنفس الموظف خلال دقيقتين = مهمة وحدة", async () => {
+  const env = makeEnv();
+  const c = await login(env);
+  const a = await call(env, "/api/task", { cookie: c, body: { emp: "ideas", text: "كم المخزون" } });
+  const b = await call(env, "/api/task", { cookie: c, body: { emp: "ideas", text: "كم المخزون" } });
+  assert.equal(a.body.id, b.body.id); assert.equal(b.body.duplicate, true);
+  assert.equal(env.fired.length, 1);
+});

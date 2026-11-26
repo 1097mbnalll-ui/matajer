@@ -383,6 +383,9 @@ export async function morningReport(env, yday) {
 }
 
 async function giveTask(env, emp, text, src, before, shown) {
+  // نفس الرسالة لنفس الموظف خلال دقيقتين (ضغطة مكررة) = مهمة وحدة، عشان ما يجي جوابين مختلفين لنفس السؤال
+  const dup = await env.DB.prepare("SELECT id FROM tasks WHERE emp = ? AND text = ? AND at > ?").bind(emp, text, now() - 120e3).first();
+  if (dup) return { ok: true, id: dup.id, woke: true, duplicate: true };
   const r = await env.DB.prepare("INSERT INTO tasks (at, emp, text, src) VALUES (?, ?, ?, ?) RETURNING id").bind(now(), emp, text, src).first();
   if (before) await before(r.id);
   // في المحادثة: رسالة المالك، أو «طلب من سلطان» لو من المدير
