@@ -11,7 +11,7 @@ const BASE = "https://office.test";
 function makeEnv(store = {}) {
   const sent = [], fired = [], storeCalls = [];
   const env = {
-    __fresh: true, DB: fakeD1(), OFFICE_PASSWORD: "كلمة-سر-تجريبية", AGENT_TOKEN: "agent-token-test",
+    __fresh: true, SYNC_WAKE: true, DB: fakeD1(), OFFICE_PASSWORD: "كلمة-سر-تجريبية", AGENT_TOKEN: "agent-token-test",
     TELEGRAM_BOT_TOKEN: "bot", TELEGRAM_CHAT_ID: "42",
     STORE_API: "https://store.test", STORE_ORIGIN: "https://shop.test", STORE_DATA_URL: "https://shop.test/data.json",
     STORE_READER_PIN: "918273645501",
@@ -514,4 +514,18 @@ test("اجتماع المالك: سلطان ما يقدر يدعو غير الم
   const inv = await A(env, "/agent/meeting-invite", { emp: "manager", id: r.body.id });
   assert.deepEqual(Object.keys(inv.body.woke).sort(), ["morning", "noon"]);
   assert.equal(env.fired.length, n, "ما صحّى أحد زيادة (monitor مربوط بس مو مشارك)");
+});
+
+test("سرعة: إرسال رسالة يرد فوراً والتصحية تكمل بالخلفية", async () => {
+  const env = makeEnv(); delete env.SYNC_WAKE;
+  const jobs = []; const c2 = { waitUntil: (p) => jobs.push(p) };
+  const lr = await worker.fetch(new Request(BASE + "/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: env.OFFICE_PASSWORD }) }), env, c2);
+  const cookie = lr.headers.get("Set-Cookie").split(";")[0];
+  let slow; env.fetch = ((f) => async (u, i) => { if (String(u).includes("anthropic")) await new Promise((r) => (slow = r)); return f(u, i); })(env.fetch);
+  const r = await worker.fetch(new Request(BASE + "/api/task", { method: "POST", headers: { "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify({ emp: "manager", text: "سريع" }) }), env, c2);
+  const j = await r.json();
+  assert.equal(j.ok, true); assert.ok(j.id); assert.equal(j.queued, true);
+  for (let i = 0; i < 100 && !slow; i++) await new Promise((r) => setTimeout(r, 5));
+  slow(); await Promise.all(jobs);
+  assert.equal(env.fired.length, 1);
 });

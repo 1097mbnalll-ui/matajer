@@ -67,7 +67,9 @@ export default {
   },
 };
 
+let CTX = null; // ctx.waitUntil: نكمّل شغل بعد ما نرد (مثل تصحية الموظف) عشان الموقع ما ينتظر
 async function route(request, env, ctx) {
+  CTX = ctx;
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, "") || "/";
   if (path.startsWith("/api/") || path.startsWith("/agent/") || path === "/tg") {
@@ -170,21 +172,24 @@ async function ownerApi(request, env, path, url) {
         if (t.result) await env.DB.prepare("INSERT INTO messages (at, emp, frm, kind, text, ref) VALUES (?, ?, 'emp', 'text', ?, ?)").bind(t.done || t.at, t.emp, t.result, t.id).run();
       }
     }
-    const st = Object.fromEntries(((await env.DB.prepare("SELECT emp, status, session_url FROM emp_state").all()).results || []).map((r) => [r.emp, r]));
-    const chats = [];
-    for (const t of TEAM) {
-      const last = await env.DB.prepare("SELECT at, frm, kind, text FROM messages WHERE emp = ? ORDER BY id DESC LIMIT 1").bind(t.key).first();
-      const seenId = (await env.DB.prepare("SELECT v FROM seen WHERE k = ?").bind("chat:" + t.key).first())?.v || 0;
-      const unread = (await env.DB.prepare("SELECT COUNT(*) n FROM messages WHERE emp = ? AND frm != 'owner' AND id > ?").bind(t.key, seenId).first()).n;
-      const r = await routineOf(env, t.key);
-      chats.push({ key: t.key, person: t.person, name: t.name, color: t.color, icon: t.icon, status: st[t.key]?.status || "idle", sessionUrl: st[t.key]?.session_url || null, linked: !!(r.id && r.token), last, unread });
-    }
-    const meetings = [];
-    for (const m of (await env.DB.prepare("SELECT * FROM meetings ORDER BY id DESC LIMIT 15").all()).results || []) {
-      const l = await env.DB.prepare("SELECT emp, text, at FROM meeting_lines WHERE meeting = ? ORDER BY id DESC LIMIT 1").bind(m.id).first();
-      meetings.push({ id: m.id, topic: m.topic, status: m.status, at: l?.at || m.at, last: l || null });
-    }
-    const pending = (await env.DB.prepare("SELECT COUNT(*) n FROM requests WHERE status = 'pending'").first()).n;
+    // استعلامات مجمّعة: كل المحادثات بخطوة وحدة
+    const [stR, lastR, unreadR, routR, meetR, mlR, pendR] = await Promise.all([
+      env.DB.prepare("SELECT emp, status, session_url FROM emp_state").all(),
+      env.DB.prepare("SELECT m.emp, m.at, m.frm, m.kind, m.text FROM messages m JOIN (SELECT emp, MAX(id) mid FROM messages GROUP BY emp) x ON m.id = x.mid").all(),
+      env.DB.prepare("SELECT m.emp, COUNT(*) n FROM messages m LEFT JOIN seen s ON s.k = 'chat:' || m.emp WHERE m.frm != 'owner' AND m.id > COALESCE(s.v, 0) GROUP BY m.emp").all(),
+      env.DB.prepare("SELECT k FROM settings WHERE k LIKE 'routine:%'").all(),
+      env.DB.prepare("SELECT id, topic, status, at FROM meetings ORDER BY id DESC LIMIT 15").all(),
+      env.DB.prepare("SELECT l.meeting, l.emp, l.text, l.at FROM meeting_lines l JOIN (SELECT meeting, MAX(id) mid FROM meeting_lines GROUP BY meeting) x ON l.id = x.mid").all(),
+      env.DB.prepare("SELECT COUNT(*) n FROM requests WHERE status = 'pending'").first(),
+    ]);
+    const by = (rs) => Object.fromEntries((rs.results || []).map((r) => [r.emp, r]));
+    const st = by(stR), lastM = by(lastR), unread = by(unreadR), linked = new Set((routR.results || []).map((r) => r.k.slice(8)));
+    const chats = TEAM.map((t) => { const L = lastM[t.key];
+      return { key: t.key, person: t.person, name: t.name, color: t.color, icon: t.icon, status: st[t.key]?.status || "idle", sessionUrl: st[t.key]?.session_url || null,
+        linked: linked.has(t.key) || !!(env[`ROUTINE_${t.key.toUpperCase()}_TOKEN`]), last: L ? { at: L.at, frm: L.frm, kind: L.kind, text: L.text } : null, unread: unread[t.key]?.n || 0 }; });
+    const ml = Object.fromEntries((mlR.results || []).map((r) => [r.meeting, r]));
+    const meetings = (meetR.results || []).map((m) => ({ id: m.id, topic: m.topic, status: m.status, at: ml[m.id]?.at || m.at, last: ml[m.id] ? { emp: ml[m.id].emp, text: ml[m.id].text, at: ml[m.id].at } : null }));
+    const pending = pendR.n;
     return json(200, { ok: true, chats, meetings, pending });
   }
   if (path === "/api/chat") {
@@ -280,7 +285,7 @@ async function ownerApi(request, env, path, url) {
     const f = body.file;
     if (f && (typeof f.b64 !== "string" || f.b64.length > 1400000 || !/^[A-Za-z0-9+/=]+$/.test(f.b64))) return json(400, { ok: false, code: "file_too_big_or_bad" });
     const note = f ? `\n[مرفق: ${clip(f.name, 120)} — نزّله بـ POST /agent/file {"emp","task":<رقم المهمة>}]` : "";
-    const r = await giveTask(env, body.emp, text + note, "الموقع", f ? async (id) => {
+    const r = await giveTaskFast(env, body.emp, text + note, "الموقع", f ? async (id) => {
       await env.DB.prepare("INSERT INTO files (task, name, type, size, b64, at) VALUES (?, ?, ?, ?, ?, ?)").bind(id, clip(f.name, 120), clip(f.type, 100), Math.floor(f.b64.length * 3 / 4), f.b64, now()).run();
     } : null, f ? `${text}\n📎 ${clip(f.name, 120)}` : text);
     return json(200, r);
@@ -405,6 +410,15 @@ async function giveTask(env, emp, text, src, before, shown) {
   const w = await wake(env, emp, `مهمة جديدة من المالك (رقم ${r.id}):\n${text}`);
   if (!w.ok) await addMsg(env, emp, "sys", whyNot(emp, w.code));
   return { ok: true, id: r.id, woke: w.ok, wakeCode: w.code || null, why: w.ok ? null : whyNot(emp, w.code), url: w.url || null };
+}
+// للموقع: نحفظ الرسالة ونرد فوراً، والتصحية تكمل بالخلفية
+async function giveTaskFast(env, emp, text, src, before, shown) {
+  if (!CTX || !CTX.waitUntil || env.SYNC_WAKE) return giveTask(env, emp, text, src, before, shown); // SYNC_WAKE للاختبارات
+  let resolveId; const idP = new Promise((r) => (resolveId = r));
+  const job = giveTask(env, emp, text, src, async (id) => { if (before) await before(id); resolveId(id); }, shown).catch(() => resolveId(null));
+  CTX.waitUntil(job);
+  const id = await Promise.race([idP, job.then((x) => x?.id)]);
+  return { ok: true, id, queued: true };
 }
 
 // موافقة أو رفض (من الموقع أو تيليقرام)

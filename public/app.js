@@ -125,13 +125,15 @@ const LINK_ERR = { token_is_url: "هذا رابط، مو الرمز. الرمز 
 let LIVE = null, C = null, USG = null, TAB = "chats", OPEN = null; // OPEN = {type:"emp",key} | {type:"meet",id}
 async function load() {
   try {
-    const [s, c, u, l] = await Promise.all([api("/api/state"), api("/api/chats"), api("/api/usage"), api("/api/live")]);
-    if (!s.ok || !c.ok) return; S = s; C = c; USG = u.ok ? u : null; LIVE = l.ok ? l : LIVE;
+    const [s, c, u] = await Promise.all([api("/api/state"), api("/api/chats"), api("/api/usage")]);
+    if (!s.ok || !c.ok) return; S = s; C = c; USG = u.ok ? u : null;
+    if (!LIVE || Date.now() - (LIVE._t || 0) > 60000) loadLive(); // الأرقام الحية (أبطأ) بالخلفية، كل دقيقة بالكثير
   } catch { return; }
   for (const t of S.team) { const x = C.chats.find((y) => y.key === t.key); if (x) Object.assign(t, { linked: x.linked }); }
   $("#app").hidden = false;
   render();
 }
+async function loadLive() { try { const l = await api("/api/live"); if (l.ok) { LIVE = { ...l, _t: Date.now() }; if (!OPEN && TAB === "chats") { const box = document.querySelector(".live2"); if (box) box.outerHTML = liveHTML(); else render(); } } } catch {} }
 function render() {
   document.querySelectorAll(".tabbar button").forEach((b) => b.classList.toggle("on", b.dataset.tab === TAB));
   const unread = C.chats.reduce((n, x) => n + x.unread, 0);
@@ -217,9 +219,19 @@ function settingsHTML() {
 }
 
 // ---------- المحادثة ----------
-function openChat(key) { OPEN = { type: "emp", key }; $("#chat").hidden = false; $("#chat").innerHTML = '<div class="empty">…</div>'; refreshOpen(true); }
-function openMeet(id) { OPEN = { type: "meet", id: Number(id) }; $("#chat").hidden = false; $("#chat").innerHTML = '<div class="empty">…</div>'; refreshOpen(true); }
-function closeChat() { OPEN = null; $("#chat").hidden = true; load(); }
+// كاش المحادثات: تنفتح فوراً من آخر نسخة، وبعدها تتحدث بهدوء
+const CH = {}, SIG = {};
+function openChat(key) { OPEN = { type: "emp", key }; history.pushState({ chat: key }, ""); $("#chat").hidden = false; paintChat(true); refreshOpen(true); }
+function openMeet(id) { OPEN = { type: "meet", id: Number(id) }; history.pushState({ meet: id }, ""); $("#chat").hidden = false; $("#chat").innerHTML = CH["m" + id] || '<div class="empty">…</div>'; refreshOpen(true); }
+function closeChat(fromPop) {
+  if (!OPEN) return;
+  if (OPEN.type === "emp") { const x = C.chats.find((y) => y.key === OPEN.key); if (x) x.unread = 0; }
+  OPEN = null; $("#chat").hidden = true; render(); // القائمة تطلع فوراً من الكاش
+  if (!fromPop && history.state && (history.state.chat || history.state.meet)) history.back();
+  setTimeout(load, 50);
+}
+addEventListener("popstate", () => { if (OPEN) closeChat(true); else if (!$("#sheet").hidden) closeSheet(); });
+function paintChat(first) { const key = OPEN?.key; if (key && CH[key]) { $("#chat").innerHTML = CH[key]; const b = $("#msgs"); if (b && first) b.scrollTop = b.scrollHeight; } else $("#chat").innerHTML = '<div class="empty">…</div>'; }
 const tmOf = (at) => new Date(at).toLocaleTimeString("ar-SA-u-nu-arab", { hour: "numeric", minute: "2-digit" });
 async function refreshOpen(first) {
   if (!OPEN) return;
@@ -229,6 +241,9 @@ async function refreshOpen(first) {
   if (OPEN.type === "emp") {
     const key = OPEN.key, t = S.team.find((x) => x.key === key), ch = C.chats.find((x) => x.key === key);
     const r = await api(`/api/chat?emp=${key}`); if (!r.ok || OPEN?.key !== key) return;
+    const sig = JSON.stringify([r.messages.at(-1)?.id, r.messages.length, r.status, Object.values(r.cards).map((q) => q.status)]);
+    if (!first && SIG[key] === sig && !$("#chat .pending-b")) return; // ما فيه جديد: لا نعيد الرسم
+    SIG[key] = sig;
     const live = r.sessionUrl ? `<a class="live" href="${esc(r.sessionUrl)}" target="_blank" rel="noopener">${SV(IC.live, 14)} لايف</a>` : "";
     let day = "";
     const msgs = r.messages.map((m) => {
@@ -252,9 +267,13 @@ async function refreshOpen(first) {
       <div class="msgs" id="msgs">${msgs}${typing}</div>
       <div class="chips">${chips}</div>
       <form class="compose" id="compose"><label class="icon attach" aria-label="إرفاق ملف">${SV(IC.attach, 20)}<input type="file" id="msgFile" hidden></label><div class="inwrap"><span id="fileName" class="fname"></span><textarea id="msgIn" rows="1" placeholder="اكتب رسالة لـ ${esc(t.person)}…"></textarea></div><button class="icon send" type="submit" aria-label="أرسل">${SV(IC.send, 20, "#fff")}</button></form>`;
+    CH[key] = $("#chat").innerHTML;
   } else {
     const id = OPEN.id;
     const r = await api(`/api/meeting?id=${id}`); if (!r.ok || OPEN?.id !== id) return;
+    const sig = JSON.stringify([r.lines.length, r.meeting.status]);
+    if (!first && SIG["m" + id] === sig) return;
+    SIG["m" + id] = sig;
     const who = (k) => k === "owner" ? { person: "أنت", color: "#0f6b4f", name: "" } : S.team.find((x) => x.key === k) || { person: k, color: "#666", name: "" };
     const names = [...new Set(r.lines.map((l) => l.emp).filter((k) => k !== "owner"))].map((k) => who(k).person).join(" · ");
     const lines = r.lines.map((l) => { const w = who(l.emp);
@@ -267,6 +286,7 @@ async function refreshOpen(first) {
       <div class="msgs" id="msgs"><div class="sys">سلطان (المدير) فتح الاجتماع</div>${lines}${decision}${open ? '<div class="dots"><i></i><i></i><i></i></div>' : ""}</div>
       <form class="compose" id="compose"><div class="inwrap"><textarea id="msgIn" rows="1" placeholder="${open ? "علّق على الاجتماع…" : "الاجتماع انتهى"}" ${open ? "" : "disabled"}></textarea></div><button class="icon send" type="submit" aria-label="أرسل" ${open ? "" : "disabled"}>${SV(IC.send, 20, "#fff")}</button></form>`;
   }
+  if (OPEN?.type === "meet") CH["m" + OPEN.id] = $("#chat").innerHTML;
   if (keep) { $("#msgIn").value = keep.v; if (keep.f) $("#msgIn").focus(); }
   const box = $("#msgs"); if (first || atBottom) box.scrollTop = box.scrollHeight;
 }
@@ -274,7 +294,7 @@ document.addEventListener("submit", async (e) => {
   if (e.target.id !== "compose") return;
   e.preventDefault();
   const text = $("#msgIn").value.trim();
-  if (OPEN?.type === "meet") { if (!text) return; $("#msgIn").value = ""; await api("/api/meeting-say", { id: OPEN.id, text }); return refreshOpen(true); }
+  if (OPEN?.type === "meet") { if (!text) return; $("#msgIn").value = ""; const box = $("#msgs"); const pend = document.createElement("div"); pend.className = "b me"; pend.textContent = text; box.appendChild(pend); box.scrollTop = box.scrollHeight; await api("/api/meeting-say", { id: OPEN.id, text }); SIG["m" + OPEN.id] = null; return refreshOpen(); }
   const fl = $("#msgFile")?.files[0];
   if (!text && !fl) return;
   let file = null;
@@ -283,9 +303,15 @@ document.addEventListener("submit", async (e) => {
     const b = new Uint8Array(await fl.arrayBuffer()); let bin = ""; for (let i = 0; i < b.length; i += 8192) bin += String.fromCharCode(...b.subarray(i, i + 8192));
     file = { name: fl.name, type: fl.type, b64: btoa(bin) };
   }
-  $("#msgIn").value = ""; if ($("#msgFile")) $("#msgFile").value = ""; if ($("#fileName")) $("#fileName").textContent = "";
-  const r = await api("/api/task", { emp: OPEN.key, text: text || "شوف الملف المرفق", file });
-  if (!r.ok) toast("ما انرسلت"); refreshOpen(true);
+  $("#msgIn").value = ""; $("#msgIn").style.height = "auto"; if ($("#msgFile")) $("#msgFile").value = ""; if ($("#fileName")) $("#fileName").textContent = "";
+  // تطلع رسالتك فوراً (مثل الواتساب) وبعدها تتأكد من الخادم
+  const box = $("#msgs"); const pend = document.createElement("div");
+  pend.className = "b me pending-b"; pend.textContent = (text || "شوف الملف المرفق") + (fl ? "\n📎 " + fl.name : "");
+  const sm = document.createElement("small"); sm.textContent = "🕓"; pend.appendChild(sm); box.querySelector(".empty")?.remove(); box.appendChild(pend); box.scrollTop = box.scrollHeight;
+  const key = OPEN.key;
+  const r = await api("/api/task", { emp: key, text: text || "شوف الملف المرفق", file }).catch(() => ({ ok: false }));
+  if (!r.ok) { sm.textContent = "⚠️ ما انرسلت"; return; }
+  sm.textContent = "✓"; SIG[key] = null; if (OPEN?.key === key) setTimeout(() => refreshOpen(), 400);
 });
 document.addEventListener("change", (e) => { if (e.target.id === "msgFile") $("#fileName").textContent = e.target.files[0] ? "📎 " + e.target.files[0].name : ""; });
 document.addEventListener("input", (e) => {
@@ -341,7 +367,7 @@ document.addEventListener("click", async (e) => {
     else if (d.chat) openChat(d.chat);
     else if (d.table !== undefined) { TAB = "chats"; render(); }
     else if (d.meet) openMeet(d.meet);
-    else if (d.closeChat !== undefined) closeChat();
+    else if (d.closeChat !== undefined) closeChat(false);
     else if (d.info) openInfo(d.info);
     else if (d.chip) { const i = $("#msgIn"); i.value = d.chip + (/[:]$|عن$|بـ$/.test(d.chip) ? " " : ""); i.focus(); }
     else if (d.emp) openChat(d.emp);
@@ -382,9 +408,12 @@ document.addEventListener("click", async (e) => {
   } catch {}
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { if (!$("#sheet").hidden) closeSheet(); else if (OPEN) closeChat(); }
+  if (e.key === "Escape") { if (!$("#sheet").hidden) closeSheet(); else if (OPEN) closeChat(false); }
   if ((e.key === "Enter" || e.key === " ") && e.target.matches?.(".emp")) { e.preventDefault(); e.target.dispatchEvent(new MouseEvent("click", { bubbles: true })); }
 });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => S && TAB === "office" && drawOffice());
-setInterval(() => { if (document.hidden || !S) return; if (OPEN) refreshOpen(); else load(); }, 7000);
+// تحديث ذكي: المحادثة المفتوحة كل ٤ ثواني، القائمة كل ١٢ ثانية، والأرقام الحية كل دقيقة
+setInterval(() => { if (!document.hidden && S && OPEN) refreshOpen(); }, 4000);
+setInterval(() => { if (!document.hidden && S && !OPEN) load(); }, 12000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && S) { if (OPEN) refreshOpen(); else load(); } });
 load();

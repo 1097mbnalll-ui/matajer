@@ -17,7 +17,7 @@ function verifyJwt(tok) {
 }
 function makeEnv(offers = {}) {
   const sent = [], fired = [], noon = { logins: 0, calls: [] };
-  const env = { __fresh: true, DB: fakeD1(), OFFICE_PASSWORD: "office-password-1", TELEGRAM_BOT_TOKEN: "bot", TELEGRAM_CHAT_ID: "42",
+  const env = { __fresh: true, SYNC_WAKE: true, DB: fakeD1(), OFFICE_PASSWORD: "office-password-1", TELEGRAM_BOT_TOKEN: "bot", TELEGRAM_CHAT_ID: "42",
     ROUTINE_NOON_ID: "trig_noon", ROUTINE_NOON_TOKEN: "tok_noon", STORE_API: "https://store.test", sent, fired, noon };
   env.fetch = async (u, init = {}) => {
     u = String(u);

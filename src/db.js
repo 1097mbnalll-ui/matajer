@@ -65,15 +65,18 @@ export async function bump(env, k, cap) {
 }
 
 export async function teamState(env) {
-  const st = Object.fromEntries(((await env.DB.prepare("SELECT * FROM emp_state").all()).results || []).map((r) => [r.emp, r]));
-  const out = [];
-  for (const t of TEAM) {
-    const last = await env.DB.prepare("SELECT at, act FROM logs WHERE emp = ? ORDER BY id DESC LIMIT 1").bind(t.key).first();
-    const open = await env.DB.prepare("SELECT COUNT(*) n FROM tasks WHERE emp = ? AND status = 'open'").bind(t.key).first();
-    out.push({ ...t, status: st[t.key]?.status || "idle", sessionUrl: st[t.key]?.session_url || null, note: st[t.key]?.note || null,
-      last: last || null, openTasks: open ? open.n : 0, perms: await permsOf(env, t.key) });
-  }
-  return out;
+  // استعلامات مجمّعة (بدل ٢١ استعلام ورا بعض) عشان الموقع يفتح بسرعة
+  const [st, last, open, perms] = await Promise.all([
+    env.DB.prepare("SELECT * FROM emp_state").all(),
+    env.DB.prepare("SELECT l.emp, l.at, l.act FROM logs l JOIN (SELECT emp, MAX(id) mid FROM logs GROUP BY emp) x ON l.id = x.mid").all(),
+    env.DB.prepare("SELECT emp, COUNT(*) n FROM tasks WHERE status = 'open' GROUP BY emp").all(),
+    env.DB.prepare("SELECT emp, area, level FROM perms").all(),
+  ]);
+  const by = (rs, f) => Object.fromEntries((rs.results || []).map((r) => [r.emp, f(r)]));
+  const S = by(st, (r) => r), L = by(last, (r) => ({ at: r.at, act: r.act })), O = by(open, (r) => r.n);
+  const P = {}; for (const r of perms.results || []) (P[r.emp] ||= {})[r.area] = r.level;
+  return TEAM.map((t) => ({ ...t, status: S[t.key]?.status || "idle", sessionUrl: S[t.key]?.session_url || null, note: S[t.key]?.note || null,
+    last: L[t.key] || null, openTasks: O[t.key] || 0, perms: Object.fromEntries(AREAS.map((a) => [a.key, P[t.key]?.[a.key] || defaultLevel(a.key)])) }));
 }
 
 // إعدادات سرية يحطها المالك من داخل الموقع (بدل إعدادات Cloudflare). المتغيرات في Cloudflare لها الأولوية
