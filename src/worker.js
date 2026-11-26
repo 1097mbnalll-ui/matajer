@@ -505,7 +505,9 @@ async function agentApi(request, env, path, url) {
     if (emp !== "manager") return json(403, { ok: false, code: "manager_only" });
     const m = await env.DB.prepare("SELECT * FROM meetings WHERE id = ?").bind(Number(body.id)).first();
     if (!m || m.status !== "open") return json(409, { ok: false, code: "meeting_closed" });
-    const who = (Array.isArray(body.who) && body.who.length ? body.who : TEAM.map((t) => t.key)).filter((k) => teamKeys.has(k) && k !== "manager");
+    // اجتماع المالك: بس المشاركين اللي اختارهم (كان سلطان يدعو الكل ويصرف جلسات زيادة)
+    const members = m.who ? JSON.parse(m.who) : TEAM.map((t) => t.key);
+    const who = (Array.isArray(body.who) && body.who.length ? body.who : members).filter((k) => teamKeys.has(k) && k !== "manager" && members.includes(k));
     const out = {};
     for (const k of who) out[k] = (await giveTask(env, k, `اجتماع رقم ${m.id}: ${m.topic}\n${clip(body.note, 1500)}\nاقرأ المحضر وقل رأيك بصراحة (موافق / معترض ولماذا / اقتراح أفضل).`, "المدير العام")).woke;
     return json(200, { ok: true, woke: out });

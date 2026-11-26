@@ -505,3 +505,13 @@ test("ضغطة مكررة: نفس الرسالة لنفس الموظف خلال 
   assert.equal(a.body.id, b.body.id); assert.equal(b.body.duplicate, true);
   assert.equal(env.fired.length, 1);
 });
+
+test("اجتماع المالك: سلطان ما يقدر يدعو غير المشاركين اللي اختارهم المالك", async () => {
+  const env = makeEnv();
+  const c = await login(env);
+  const r = await call(env, "/api/meeting-new", { cookie: c, body: { topic: "نون", who: ["morning", "noon"] } });
+  const n = env.fired.length;
+  const inv = await A(env, "/agent/meeting-invite", { emp: "manager", id: r.body.id });
+  assert.deepEqual(Object.keys(inv.body.woke).sort(), ["morning", "noon"]);
+  assert.equal(env.fired.length, n, "ما صحّى أحد زيادة (monitor مربوط بس مو مشارك)");
+});
