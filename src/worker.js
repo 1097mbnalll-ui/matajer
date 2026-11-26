@@ -198,6 +198,16 @@ async function ownerApi(request, env, path, url) {
     const st = await env.DB.prepare("SELECT status, session_url FROM emp_state WHERE emp = ?").bind(emp).first();
     return json(200, { ok: true, messages: msgs, cards, status: st?.status || "idle", sessionUrl: st?.session_url || null });
   }
+  // الأرقام الحية: من الخادم مباشرة، بدون أي موظف (فوري ومجاني)
+  if (path === "/api/live") {
+    const [t, a] = await Promise.all([storeCall(env, "/admin/today"), storeCall(env, "/admin/alerts")]);
+    const store = t.ok ? { ok: true, orders: t.body.today?.orders ?? 0, revenue: t.body.today?.revenue ?? 0, cost: t.body.today?.cost ?? 0, canceled: t.body.today?.canceled ?? 0,
+      lastWeek: t.body.lastWeek?.revenue ?? null, open: Object.fromEntries((t.body.open || []).map((o) => [o.status, o.n])), cash: t.body.cashBalance ?? null, late: a.ok ? (a.body.orders || []).length : null } : { ok: false };
+    const ns = await getSetting(env, "noon_snapshot");
+    const noon = ns ? { ok: true, at: ns.at, total: ns.items.reduce((n, i) => n + i.stock, 0), products: ns.items.length, out: ns.items.filter((i) => i.active && i.stock <= 0).length, hidden: ns.items.filter((i) => i.active && !i.live).length,
+      items: ns.items.slice().sort((x, y) => y.stock - x.stock).slice(0, 12) } : { ok: false, why: (await noonKey(env)) ? "no_skus" : "no_key" };
+    return json(200, { ok: true, at: now(), store, noon });
+  }
   if (path === "/api/usage") { // الاستهلاك: عدد الجلسات الفعلي من سجل المكتب + تقدير التوكنز والدولار
     const per = Number(await getSetting(env, "cost_per_session", 0.35)), tokPer = Number(await getSetting(env, "tokens_per_session", 600000));
     const dayStart = (d) => Date.parse(riyadhDayStr(d) + "T00:00:00+03:00");

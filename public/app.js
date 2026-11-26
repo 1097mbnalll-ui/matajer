@@ -122,11 +122,11 @@ const KIND_PREFIX = { card: "ينتظر موافقتك: ", alert: "تنبيه: "
 const LINK_ERR = { token_is_url: "هذا رابط، مو الرمز. الرمز يبدأ بـ sk-ant-", token_empty: "خانة الرمز فاضية", token_masked: "هذا رمز مختصر فيه (...). سوّ رمز جديد (Regenerate) وانسخه كامل على طول", token_short: "الرمز ناقص. انسخه كامل", bad_routine_id: "رقم المهمة غلط" };
 
 // ---------- الحالة والتبويبات ----------
-let C = null, USG = null, TAB = "chats", OPEN = null; // OPEN = {type:"emp",key} | {type:"meet",id}
+let LIVE = null, C = null, USG = null, TAB = "chats", OPEN = null; // OPEN = {type:"emp",key} | {type:"meet",id}
 async function load() {
   try {
-    const [s, c, u] = await Promise.all([api("/api/state"), api("/api/chats"), api("/api/usage")]);
-    if (!s.ok || !c.ok) return; S = s; C = c; USG = u.ok ? u : null;
+    const [s, c, u, l] = await Promise.all([api("/api/state"), api("/api/chats"), api("/api/usage"), api("/api/live")]);
+    if (!s.ok || !c.ok) return; S = s; C = c; USG = u.ok ? u : null; LIVE = l.ok ? l : LIVE;
   } catch { return; }
   for (const t of S.team) { const x = C.chats.find((y) => y.key === t.key); if (x) Object.assign(t, { linked: x.linked }); }
   $("#app").hidden = false;
@@ -160,6 +160,7 @@ function chatsHTML() {
   }
   const usage = USG ? `<button class="usage" data-tab="set"><span>استهلاك اليوم: <b>${num(USG.today.sessions)}</b> جلسة · تقريباً <b>${USG.today.usd.toLocaleString("ar-SA")}$</b></span><small>الحد ${num(USG.fireCap)} جلسة</small></button>` : "";
   return `<header class="tophead"><h1 class="title">المحادثات</h1><span class="hbtns">${C.pending ? `<button class="pill" data-tab="ok">${num(C.pending)} ينتظر موافقتك</button>` : ""}<button class="pill ghost" data-newmeet>+ اجتماع</button></span></header>
+    ${liveHTML()}
     <div class="searchbox"><input id="q" placeholder="ابحث في المحادثات" value="${esc(q)}">${usage}</div><div class="clist">${rows.join("") || '<div class="empty">ما فيه نتائج</div>'}</div>`;
 }
 function officeHTML() {
@@ -171,6 +172,20 @@ function approvalsHTML() {
   const nm = (k) => { const t = S.team.find((x) => x.key === k); return t ? `${t.person} · ${t.name}` : k; };
   return `<header class="tophead"><h1 class="title">الموافقات</h1></header><div class="pad">${S.pending.map((q) => `<div class="req"><div class="meta">${esc(nm(q.emp))} · ${esc(S.areas.find((a) => a.key === q.area)?.name)} · ${when(q.at)}${q.meeting ? ` · بعد اجتماع رقم ${q.meeting}` : ""}</div>
     <b>${esc(q.title)}</b>${q.detail ? `<pre>${esc(q.detail)}</pre>` : ""}<div class="btns"><button class="btn primary" data-yes="${q.id}">موافق</button><button class="btn danger" data-no="${q.id}">رفض</button></div></div>`).join("") || '<div class="empty">ما فيه شي ينتظرك</div>'}</div>`;
+}
+function liveHTML() {
+  if (!LIVE) return "";
+  const sar = (n) => Number(n || 0).toLocaleString("ar-SA", { maximumFractionDigits: 0 }) + " ر.س";
+  const st = LIVE.store, nn = LIVE.noon;
+  const openN = st.ok ? Object.values(st.open || {}).reduce((a, b) => a + b, 0) : 0;
+  const chg = st.ok && st.lastWeek ? Math.round((st.revenue - st.lastWeek) / st.lastWeek * 100) : null;
+  const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? "الحين" : `قبل ${num(m)} دقيقة`; };
+  const storeBox = st.ok ? `<div class="lv"><div class="lvh">البقالة اليوم <small>لحظي</small></div><div class="lvn">${sar(st.revenue)}</div><div class="lvs">${num(st.orders)} طلب${chg != null ? ` · ${chg >= 0 ? "+" : ""}${num(chg)}٪ عن الأسبوع الماضي` : ""}${st.cost > 0 ? ` · ربح تقريبي ${sar(st.revenue - st.cost)}` : ""}</div>
+    <div class="lvs">${openN ? `مفتوحة: ${num(openN)}` : "ما فيه طلبات مفتوحة"}${st.late ? ` · <b class="warn">متأخرة: ${num(st.late)}</b>` : ""}${st.cash != null ? ` · عهدة المندوب: ${sar(st.cash)}` : ""}</div></div>` : `<div class="lv"><div class="lvh">البقالة</div><div class="lvs">ما قدرت أقرأ المتجر الحين</div></div>`;
+  const noonBox = nn.ok ? `<div class="lv"><div class="lvh">نون الحين <small>${ago(nn.at)}</small></div><div class="lvn">${num(nn.total)} قطعة</div><div class="lvs">${num(nn.products)} منتج${nn.out ? ` · <b class="warn">خلص: ${num(nn.out)}</b>` : ""}${nn.hidden ? ` · <b class="warn">مخفي: ${num(nn.hidden)}</b>` : ""}</div>
+    <details class="lvd"><summary>التفاصيل</summary>${nn.items.map((i) => `<div class="lvi"><span>${esc(i.title.slice(0, 40))}</span><b>${num(i.stock)}</b></div>`).join("")}</details></div>`
+    : `<div class="lv"><div class="lvh">نون</div><div class="lvs">${nn.why === "no_key" ? "ما انربط مفتاح نون" : "راكان بيعبّي قائمة المنتجات أول مهمة، أو أضفها من الإعدادات"}</div></div>`;
+  return `<div class="live2">${storeBox}${noonBox}</div>`;
 }
 function usageHTML() {
   if (!USG) return "";

@@ -137,3 +137,14 @@ test("التعليمات تجي من المكتب، ومسؤول نون يطلب
   const dl = await call(env, "/agent/noon-export", { body: { emp: "noon", export_code: "EX1" }, agent: tok });
   assert.equal(dl.body.ready, true); assert.match(dl.body.text, /A1,3,30/);
 });
+
+test("الأرقام الحية: نون من آخر فحص (بدون جلسة)", async () => {
+  const env = makeEnv({ A1: offer("حليب", 2), D4: offer("سكر", 40) });
+  const c = await login(env);
+  await call(env, "/api/noon-key", { cookie: c, body: { text: keyFile() } });
+  await call(env, "/api/noon-skus", { cookie: c, body: { skus: "A1 D4" } });
+  await runNoon(env);
+  const l = await call(env, "/api/live", { cookie: c });
+  assert.equal(l.body.noon.total, 42); assert.equal(l.body.noon.products, 2); assert.equal(l.body.noon.items[0].title, "سكر");
+  assert.equal(env.fired.length, 0);
+});

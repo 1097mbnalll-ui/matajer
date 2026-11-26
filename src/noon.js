@@ -95,10 +95,12 @@ export async function runNoon(env) {
   const rules = { ...NOON_DEFAULTS, ...((await getSetting(env, "noon_rules")) || {}) };
   const found = [];
   let reached = false, authFail = null;
+  const snap = [];
   for (const sku of skus) {
     const r = await noonCall(env, "GET", `/offer/v1/product/${encodeURIComponent(sku)}`);
     if (!r.ok) { if (r.code === "login_failed" || r.code === "no_cookie") { authFail = r; break; } continue; }
     reached = true;
+    for (const o of (r.data?.offers || []).filter((x) => x.country_code === rules.country)) snap.push({ sku, title: r.data.title || sku, stock: Number(o.active_net_stock) || 0, live: !!o.live_status, active: !!o.is_active, price: o.price?.amount ?? null });
     for (const o of (r.data?.offers || []).filter((x) => x.country_code === rules.country)) {
       const name = r.data.title || sku;
       if (o.is_active && Number(o.active_net_stock) <= rules.lowStock)
@@ -128,5 +130,6 @@ export async function runNoon(env) {
     await addMsg(env, "noon", "emp", `${a.title}\n${a.body || ""}`, "alert", a.id);
     if (a.level === "urgent") await wake(env, "noon", `تنبيه نون (${a.level}): ${a.title}\n${a.body}\nرقم التنبيه: ${a.id}`);
   }
+  if (reached) await setSetting(env, "noon_snapshot", { at: now(), items: snap }); // للأرقام الحية في المكتب (بدون جلسة)
   return { checked: skus.length, fresh: fresh.length };
 }

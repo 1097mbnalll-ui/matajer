@@ -196,3 +196,12 @@ body { background: var(--card); }
 .pick input { width: 20px; height: 20px; accent-color: var(--brand); }
 .pick span { display: grid; } .pick small { color: var(--muted); }
 .pick:has(input:checked) { border-color: var(--brand); background: var(--brand-soft); }
+
+.live2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px 16px 0; background: var(--bg); }
+@media (max-width: 360px) { .live2 { grid-template-columns: 1fr; } }
+.lv { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; min-width: 0; }
+.lvh { font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; gap: 6px; } .lvh small { color: var(--brand); }
+.lvn { font-size: 22px; font-weight: 800; margin: 2px 0; }
+.lvs { font-size: 12.5px; color: var(--muted); } .lvs b.warn { color: var(--urgent); }
+.lvd summary { font-size: 12.5px; color: var(--brand); margin-top: 4px; }
+.lvi { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; padding: 3px 0; border-bottom: 1px dashed var(--line); } .lvi span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
