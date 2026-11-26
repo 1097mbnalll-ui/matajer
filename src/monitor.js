@@ -58,7 +58,7 @@ export async function collect(env, opts = {}) {
     checked.add("late");
     for (const o of al.body.orders || []) {
       const st = { new: "ما انقبل", accepted: "ما طلع مع المندوب", onway: "ما وصل للزبون" }[o.status] || o.status;
-      found.push({ k: `late:${o.no}:${o.status}`, level: o.status === "onway" || o.status === "new" ? "urgent" : "important", title: `طلب ${o.no} متأخر`, body: `${st} من وقت طويل.` });
+      found.push({ k: `late:${o.no}:${o.status}`, level: o.status === "onway" ? "urgent" : "important", title: `طلب ${o.no} متأخر`, body: `${st} من وقت طويل.` });
     }
   } else if (al.status === 401 || al.status === 403) {
     found.push({ k: "reader_denied", level: "important", title: "المراقب ما يقدر يقرأ المتجر", body: "حساب «قارئ المكتب» مرفوض. يمكن انتهى أو تغيّرت كلمة سره." });
@@ -66,13 +66,18 @@ export async function collect(env, opts = {}) {
   }
   checked.add("reader_denied");
 
-  // ٣) منتجات خلصت
-  const st = await storeCall(env, "/admin/stock", { summary: true });
-  if (st.ok) {
-    checked.add("out");
-    const low = st.body.low || {};
-    const out = Object.entries(low).filter(([, q]) => Number(q) < rules.lowStockMin).map(([id]) => id);
-    if (out.length) found.push({ k: "out:all", level: "important", title: `${out.length} منتج خلص من المخزون`, body: `أمثلة: ${out.slice(0, 5).join("، ")}` });
+  // ٣) منتجات خلصت: بس المنتجات المعروضة في الموقع (data.json) وبأسمائها، مرة بالساعة.
+  // (جدول المخزون فيه آلاف أصناف الكاشير اللي مو معروضة، وكانت تطلّع «٢١٠٦ منتج خلص» وهو رقم مضلل)
+  let data = null;
+  if (opts.hourly && env.STORE_DATA_URL) { try { const r = await f(env.STORE_DATA_URL, { cf: { cacheTtl: 300 } }); if (r.ok) data = await r.json(); } catch {} }
+  if (data) {
+    const st = await storeCall(env, "/admin/stock", { summary: true });
+    if (st.ok) {
+      checked.add("out");
+      const low = st.body.low || {};
+      const shown = (data.products || []).filter((p) => !p.hidden && p.price > 0 && low[p.id] != null && Number(low[p.id]) < rules.lowStockMin);
+      if (shown.length) found.push({ k: "out:all", level: shown.length <= 30 ? "important" : "info", title: `${shown.length} منتج معروض في الموقع خلص`, body: `مثل: ${shown.slice(0, 6).map((p) => p.name).join("، ")}` });
+    }
   }
 
   // ٤) كاش مندوب عالي
@@ -85,11 +90,9 @@ export async function collect(env, opts = {}) {
   }
 
   // ٥) سعر أقل من التكلفة (ثقيل: مرة بالساعة)
-  if (opts.hourly && env.STORE_DATA_URL) {
+  if (data) {
     const full = await storeCall(env, "/admin/stock");
-    let data = null;
-    try { const r = await f(env.STORE_DATA_URL, { cf: { cacheTtl: 300 } }); if (r.ok) data = await r.json(); } catch {}
-    if (full.ok && data) {
+    if (full.ok) {
       checked.add("loss");
       const costs = full.body.costs || {};
       for (const p of data.products || []) {

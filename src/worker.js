@@ -431,7 +431,9 @@ async function agentApi(request, env, path, url) {
     const recent = (await env.DB.prepare("SELECT at, act FROM logs WHERE emp = ? AND act NOT IN ('woke','task_received','wake_queued','read_store','read_noon') ORDER BY id DESC LIMIT 8").bind(emp).all()).results || [];
     const instructions = `${AGENT_TEXT.common || ""}\n\n${AGENT_TEXT[emp] || ""}`;
     const me = TEAM.find((t) => t.key === emp);
-    return json(200, { ok: true, instructions, me: { key: me.key, person: me.person, name: me.name }, perms: await permsOf(env, emp), tasks, requests: mine.slice(0, 8), alerts: alerts.slice(0, 10), meetings, recent });
+    // سلطان يشوف آخر شغل الفريق كله عشان ينسّق ويما يكرر
+    const team = emp === "manager" ? ((await env.DB.prepare("SELECT datetime(at/1000,'unixepoch','+3 hours') t, emp, frm, kind, substr(text,1,200) text FROM messages ORDER BY id DESC LIMIT 15").all()).results || []) : undefined;
+    return json(200, { ok: true, instructions, me: { key: me.key, person: me.person, name: me.name }, perms: await permsOf(env, emp), tasks, requests: mine.slice(0, 8), alerts: alerts.slice(0, 10), meetings, recent, ...(team ? { team } : {}) });
   }
   if (path === "/agent/status") {
     const st = ["idle", "working", "meeting"].includes(body.status) ? body.status : "idle";
@@ -443,7 +445,6 @@ async function agentApi(request, env, path, url) {
 
   // يكلم المالك: المدير ومطوّر الأفكار والمساعد بس، والباقي عن طريق المدير
   if (path === "/agent/tell") {
-    if (!TEAM.find((t) => t.key === emp)?.direct) return json(403, { ok: false, code: "via_manager" });
     const text = clip(body.text, 3500).trim();
     if (!text) return json(400, { ok: false, code: "empty" });
     await tg(env, `💬 ${nameOf(emp)}:\n${text}`);

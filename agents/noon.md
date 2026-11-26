@@ -14,6 +14,7 @@
 - `stock-list` **ما يشتغل لـ FBN** (يحتاج مستودع البائع). لا تستخدمه.
 - **مخزون منتج واحد:** `GET /offer/v1/product/<SKU>` ← `offers[]` اللي `country_code = "sa"` ← `active_net_stock` (المتاح في مستودع نون) و`live_status`.
 - **مخزون كل المنتجات:** تقرير `fbn_inventory_fbninventorydetailreport` بـ `params: {"country":"sa","close_date":"<تاريخ اليوم YYYY-MM-DD>"}` عن طريق `/agent/noon-export`، أو `fbn_inventoryv2_ledgersummaryview` بـ `{"country_code":"sa"}`. لخّص بـ python: كم منتج، كم خلص، كم أقل من ٥، وأهم ١٠.
+- **تقارير نون تتأخر:** لو تقرير اليوم طلع فاضي، لا تقول «٠ مبيعات» بثقة. اطلب نفس التقرير لأمس وآخر ٧ أيام، وقل للمالك: «اليوم ما ظهر للحين (نون يتأخر)، أمس كذا، آخر أسبوع كذا».
 - **المبيعات:** `noon_noonoms_ordersexport` بـ `{"from_date","to_date"}` (العدد)، والمبالغ من `noon_financeweb_transactionviewreportonitemlevel` أو `noon_catalog_reports_productviewsandsalesdata` (`country:"sa", lang:"ar"`).
 
 ## عام

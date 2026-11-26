@@ -152,7 +152,7 @@ test("المالك يوافق من تيليقرام، وغيره ما يقدر",
 
 test("بس المدير والقنوات الخاصة يكلمون المالك مباشرة", async () => {
   const env = makeEnv();
-  assert.equal((await A(env, "/agent/tell", { emp: "monitor", text: "هلا" })).body.code, "via_manager");
+  assert.equal((await A(env, "/agent/tell", { emp: "monitor", text: "هلا" })).status, 200, "كل الموظفين يقدرون يكلمون المالك في محادثتهم");
   assert.equal((await A(env, "/agent/tell", { emp: "ideas", text: "طوّرت فكرتك" })).status, 200);
   assert.equal((await A(env, "/agent/assign", { emp: "monitor", to: "noon", text: "x" })).status, 403);
   assert.equal((await A(env, "/agent/assign", { emp: "manager", to: "noon", text: "راجع نون" })).status, 200);
@@ -196,12 +196,12 @@ test("المراقب: تأخير، خلص المخزون، كاش عالي، ب�
   const texts = env.sent.map((m) => m.text).join("\n");
   assert.match(texts, /طلب #1007 متأخر/);
   assert.match(texts, /طلب #1008 متأخر/);
-  assert.match(texts, /1 منتج خلص/);
+  assert.match(texts, /1 منتج معروض في الموقع خلص/); assert.match(texts, /حليب/);
   assert.match(texts, /سالم/);
   assert.doesNotMatch(texts, /فهد/);
   assert.match(texts, /«حليب» يتباع بخسارة/);
   assert.doesNotMatch(texts, /خبز/);
-  assert.equal(env.fired.length, 1, "العاجل بس يصحّي المراقب (الطلب اللي في الطريق)");
+  assert.equal(env.fired.length, 1, "العاجل بس (الطلب اللي في الطريق) يصحّي المراقب");
   assert.ok(env.storeCalls.every((c) => c.p === "/ping" || c.origin === "https://shop.test"));
   assert.ok(env.storeCalls.filter((c) => c.p.startsWith("/admin")).every((c) => c.body.session), "يقرأ بجلسة قارئ المكتب");
 });
